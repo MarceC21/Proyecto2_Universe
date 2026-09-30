@@ -28,8 +28,11 @@ impl Ray {
 }
 
 // Resultado de probar la intersección entre un rayo y un objeto
-
-// También se carga el material del objeto (albedo + coeficientes)
+//
+// Además de dónde y con qué normal se chocó, ahora también se carga el
+// material del objeto (albedo + coeficientes) porque quien calcula la
+// iluminación (cast_ray, en main.rs) necesita saber CÓMO responde esa
+// superficie a la luz, no solo su color plano.
 #[derive(Debug, Clone, Copy)]
 pub struct Intersect {
     pub distance: f32,
@@ -40,6 +43,12 @@ pub struct Intersect {
     pub kd: f32,        // coeficiente difuso (cuánto rebota la luz directa)
     pub emissive: bool, // true si el objeto emite su propia luz (el Sol)
     pub is_intersecting: bool,
+
+    // Objetos con material completo (ver material.rs): índice en el
+    // catálogo y coordenadas de textura. Con `None` se usan color/ka/kd.
+    pub material: Option<usize>,
+    pub u: f32,
+    pub v: f32,
 }
 
 impl Intersect {
@@ -61,7 +70,18 @@ impl Intersect {
             kd,
             emissive,
             is_intersecting: true,
+            material: None,
+            u: 0.0,
+            v: 0.0,
         }
+    }
+
+    // Asocia el impacto a un material del catálogo y a un punto UV.
+    pub fn with_material(mut self, material: usize, u: f32, v: f32) -> Self {
+        self.material = Some(material);
+        self.u = u;
+        self.v = v;
+        self
     }
 
     // "No hay solución real": el rayo pasa de largo sin tocar el objeto
@@ -75,6 +95,9 @@ impl Intersect {
             kd: 0.0,
             emissive: false,
             is_intersecting: false,
+            material: None,
+            u: 0.0,
+            v: 0.0,
         }
     }
 }
