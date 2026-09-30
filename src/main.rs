@@ -1,6 +1,5 @@
 use raylib::prelude::*;
 
-mod config;
 mod framebuffer;
 mod ray_intersect;
 mod esfera;
@@ -8,14 +7,26 @@ mod luz;
 mod planeta;
 mod camara;
 mod skybox;
+mod cubo;
+mod material;
+mod textura;
+mod mesa;
+mod escena;
 
 use framebuffer::Framebuffer;
 use ray_intersect::{Intersect, RayIntersect};
 use esfera::Esfera;
 use luz::Luz;
 use planeta::{Planet, OrbitalParameters};
-use camara::Camera;
+use camara::{Camera, CamaraPersona};
 use skybox::sky_color;
+use cubo::Cubo;
+use material::{Material, crear_materiales};
+use mesa::{pantalla_texture_size, consola_texture_size};
+use escena::{
+    crear_habitacion, obstaculos, planetario_origen, EYE_HEIGHT, PLAYER_RADIUS, PLAYER_START_X,
+    PLAYER_START_Z, ROOM_HALF_X, ROOM_HALF_Z,
+};
 
 // ---------------------------------------------------------------------
 // Trazado de rayos y sombreado
@@ -28,9 +39,12 @@ fn cast_ray(
     ray_origin: &Vector3,
     ray_direction: &Vector3,
     planets: &[Planet],
+    cubos: &[Cubo],
+    materials: &[Material],
     light: &Luz,
     sun_center: Vector3,
     orbit_radii: &[f32],
+    depth: u32,
 ) -> Color {
 
     let mut closest_distance = f32::INFINITY;
@@ -47,46 +61,136 @@ fn cast_ray(
 
     }
 
-    if !closest_intersect.is_intersecting {
-        if let Some(ring) = orbit_ring_color(ray_origin, ray_direction, sun_center, orbit_radii) {
-            return ring;
+    // Los bloques (habitación, mesa) compiten por el impacto más
+    // cercano con las esferas: se usa el mismo criterio de distancia.
+    for cubo in cubos {
+
+        let intersect = cubo.ray_intersect(ray_origin, ray_direction);
+
+        if intersect.is_intersecting && intersect.distance < closest_distance {
+            closest_distance = intersect.distance;
+            closest_intersect = intersect;
         }
+
+    }
+
+    // Los anillos ya no solo aparecen cuando el rayo no choca con nada:
+    // ahora hay paredes y una mesa, así que el anillo solo se dibuja si
+    // está MÁS CERCA que el impacto más cercano (resuelve su profundidad).
+    if let Some((ring_t, ring_color)) = orbit_ring_hit(ray_origin, ray_direction, sun_center, orbit_radii) {
+        if ring_t < closest_distance {
+            return ring_color;
+        }
+    }
+
+    if !closest_intersect.is_intersecting {
         return sky_color(ray_direction);
     }
 
-    shade(&closest_intersect, light)
+    shade(
+        &closest_intersect, ray_direction, materials, light,
+        planets, cubos, sun_center, orbit_radii, depth,
+    )
 }
 
-// Sombreado: ambiente + difusa (Ley de Lambert). El Sol es la única
-// luz de la escena y es puntual: le pega a cada planeta desde su
-// posición, sin importar desde qué lado lo esté viendo la cámara (la
-// difusa NO depende del observador, solo del ángulo normal-luz), así
-// que cada planeta queda con su "lado día" iluminado y su "lado noche"
-// a oscuras, tal cual pasa en la realidad.
-fn shade(intersect: &Intersect, light: &Luz) -> Color {
+// Profundidad máxima de rayos reflejados: cada rebote es un cast_ray()
+// completo (recorre toda la escena de nuevo), así que se mantiene bajo
+// para no disparar el costo. 2 alcanza para que el marco metálico y el
+// tablero se reflejen entre sí sin verse "cortada" la reflexión.
+const MAX_REFLECTION_DEPTH: u32 = 2;
+const REFLECTION_BIAS: f32 = 0.001;
 
-    // El Sol no recibe la luz: ES la luz. Se dibuja siempre a su color
-    // pleno (si se sombreara como los demás, se vería como una bola
-    // negra, porque nada más lo ilumina a él).
+// Sombreado: ambiente + difusa (Lambert) + especular (Blinn-Phong) +
+// reflexión trazada + emisión. El Sol es la única luz de la escena y
+// es puntual.
+//
+// Dos caminos, según si el impacto trae un material del catálogo
+// (mesa.rs) o no (planetas, habitación: siguen con su color/ka/kd
+// planos de antes, sin tocar esfera.rs):
+//
+//   con material: base = textura(u,v) * albedo del material; se usan
+//   también ks, shininess, reflectividad y emisión.
+//
+//   sin material: base = intersect.color; ks = 0 (sin brillo) y
+//   reflectividad = 0 (sin rayo reflejado), igual que se comportaba
+//   todo antes de esta mesa.
+//
+// Fórmula (ver el comentario al inicio de material.rs):
+//   local = ka*base + kd*base*luz*max(N.L,0) + ks*luz*max(N.H,0)^shininess
+//   color = local*(1 - reflectividad) + reflejo*reflectividad + base*emision
+fn shade(
+    intersect: &Intersect,
+    ray_direction: &Vector3,
+    materials: &[Material],
+    light: &Luz,
+    planets: &[Planet],
+    cubos: &[Cubo],
+    sun_center: Vector3,
+    orbit_radii: &[f32],
+    depth: u32,
+) -> Color {
+
+    // El Sol no recibe la luz: ES la luz.
     if intersect.emissive {
         return intersect.color;
     }
 
+    let (base, ka, kd, ks, shininess, reflectivity, emission) = match intersect.material {
+        Some(id) => {
+            let m = &materials[id];
+            let tex = m.textura.sample(intersect.u, intersect.v);
+            (mul_colors(tex, m.albedo), m.ka, m.kd, m.ks, m.shininess, m.reflectividad, m.emision)
+        }
+        None => (intersect.color, intersect.ka, intersect.kd, 0.0, 32.0, 0.0, 0.0),
+    };
+
     let light_dir = (light.position - intersect.point).normalize();
+    let view_dir = (Vector3::zero() - *ray_direction).normalize();
+    let half_dir = (light_dir + view_dir).normalize();
 
     // Se recorta en 0 cuando la cara mira para el otro lado de la luz
-    // (esa cara queda sin difusa: es la noche de ese planeta).
+    // (esa cara queda sin difusa ni especular: es su "lado noche").
     let diffuse_intensity = intersect.normal.dot(light_dir).max(0.0);
+    let specular_intensity = if diffuse_intensity > 0.0 {
+        intersect.normal.dot(half_dir).max(0.0).powf(shininess)
+    } else {
+        0.0
+    };
 
-    let ambient = mul_color(intersect.color, intersect.ka);
+    let ambient = mul_color(base, ka);
+    let diffuse = mul_color(mul_colors(base, light.color), kd * diffuse_intensity * light.intensity);
+    let specular = mul_color(light.color, ks * specular_intensity * light.intensity);
 
-    let diffuse = mul_color(
-        mul_colors(intersect.color, light.color),
-        intersect.kd * diffuse_intensity * light.intensity,
-    );
+    let local = add_colors(add_colors(ambient, diffuse), specular);
 
-    add_colors(ambient, diffuse)
+    // Reflexión trazada: se relanza un rayo completo en la dirección
+    // reflejada y se mezcla con el sombreado local según `reflectivity`.
+    // Si ya se llegó a la profundidad máxima, se trata como si no
+    // reflejara nada (en vez de oscurecer con un color reflejado
+    // vacío): mejor un material algo menos brillante que un borde
+    // negro en los rebotes más profundos.
+    let final_local = if reflectivity > 0.001 && depth < MAX_REFLECTION_DEPTH {
+        let reflected_dir = *ray_direction
+            - intersect.normal * (2.0 * ray_direction.dot(intersect.normal));
+        let reflected_origin = intersect.point + intersect.normal * REFLECTION_BIAS;
+        let reflected_color = cast_ray(
+            &reflected_origin, &reflected_dir, planets, cubos, materials,
+            light, sun_center, orbit_radii, depth + 1,
+        );
+        add_colors(
+            mul_color(local, 1.0 - reflectivity),
+            mul_color(reflected_color, reflectivity),
+        )
+    } else {
+        local
+    };
+
+    // Emisión: se suma color propio (líneas cian, indicadores) sin
+    // depender de la luz. `emission` puede pasar de 1.0 a propósito
+    // (para que se lea incluso con la ambiental baja de la nave).
+    add_colors(final_local, mul_color(base, emission))
 }
+
 
 // Escala un color por un factor (recorta en 0..255 por si se pasa)
 fn mul_color(color: Color, factor: f32) -> Color {
@@ -127,12 +231,12 @@ fn add_colors(a: Color, b: Color) -> Color {
 // (y = altura del Sol) y se compara qué tan lejos quedó ese punto del
 // Sol contra el radio de cada órbita. Nada de geometría ni listas
 // precalculadas: es una división y una resta por cada órbita.
-fn orbit_ring_color(
+fn orbit_ring_hit(
     ray_origin: &Vector3,
     ray_direction: &Vector3,
     sun_center: Vector3,
     orbit_radii: &[f32],
-) -> Option<Color> {
+) -> Option<(f32, Color)> {
 
     // Rayo casi paralelo al plano orbital: no vale la pena intersectar
     // (o no hay solución útil, o el "anillo" saldría estirado hasta el
@@ -158,7 +262,7 @@ fn orbit_ring_color(
         let thickness = (radius * 0.004).max(0.01);
 
         if (radial_distance - radius).abs() < thickness {
-            return Some(Color::new(70, 90, 120, 255)); // línea tenue, gris azulado
+            return Some((t, Color::new(70, 90, 120, 255))); // línea tenue, gris azulado
         }
     }
 
@@ -168,40 +272,64 @@ fn orbit_ring_color(
 /// El raytracer no es más que un for de dos dimensiones que recorre la
 /// pantalla: por cada pixel se lanza un rayo y se pinta el color que
 /// ese rayo trae de vuelta.
+///
+/// Dos mejoras de velocidad respecto a la versión anterior:
+///   - La base de la cámara (forward/right/up) se calcula UNA vez por
+///     frame y se recibe ya hecha, en vez de recalcularla por pixel.
+///   - Las filas se reparten entre hilos (std::thread::scope, sin
+///     dependencias nuevas). Cada pixel es independiente de los demás,
+///     así que el trabajo se paraleliza sin coordinación.
 pub fn render(
     framebuffer: &mut Framebuffer,
     planets: &[Planet],
-    camera: &Camera,
+    cubos: &[Cubo],
+    materials: &[Material],
+    eye: Vector3,
+    basis: (Vector3, Vector3, Vector3),
     light: &Luz,
     sun_center: Vector3,
     orbit_radii: &[f32],
 ) {
 
-    let width = framebuffer.width as f32;
-    let height = framebuffer.height as f32;
+    let w = framebuffer.width as usize;
+    let h = framebuffer.height as usize;
+    let width = w as f32;
+    let height = h as f32;
     let aspect_ratio = width / height;
+    let (forward, right, up) = basis;
 
-    for y in 0..framebuffer.height {
-        for x in 0..framebuffer.width {
+    let threads = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4);
+    let rows_per_chunk = h.div_ceil(threads).max(1);
 
-            // Se mapea la coordenada del pixel a espacio de pantalla [-1, 1]
-            let screen_x = (2.0 * x as f32) / width - 1.0;
-            let screen_y = -(2.0 * y as f32) / height + 1.0;
+    let mut pixels = vec![Color::BLACK; w * h];
 
-            // Se ajusta por el aspect ratio
-            let screen_x = screen_x * aspect_ratio;
+    std::thread::scope(|scope| {
+        for (chunk_index, chunk) in pixels.chunks_mut(rows_per_chunk * w).enumerate() {
+            let first_row = chunk_index * rows_per_chunk;
 
-            // Dirección del rayo en espacio de CÁMARA...
-            let ray_direction_camera = Vector3::new(screen_x, screen_y, -1.0).normalize();
+            scope.spawn(move || {
+                for (i, pixel) in chunk.iter_mut().enumerate() {
+                    let x = i % w;
+                    let y = first_row + i / w;
 
-            // ...rotada al espacio del MUNDO según hacia dónde esté
-            // orientada la cámara orbital ahora mismo.
-            let ray_direction = camera.basis_change(&ray_direction_camera);
+                    // Pixel -> espacio de pantalla [-1, 1], ajustado por aspect ratio
+                    let screen_x = ((2.0 * x as f32) / width - 1.0) * aspect_ratio;
+                    let screen_y = -(2.0 * y as f32) / height + 1.0;
 
-            let pixel_color = cast_ray(&camera.eye, &ray_direction, planets, light, sun_center, orbit_radii);
+                    // Dirección en espacio de cámara (adelante = -Z) rotada al
+                    // mundo con la base de la cámara.
+                    let ray_direction =
+                        (right * screen_x + up * screen_y + forward).normalize();
 
-            framebuffer.set_current_color(pixel_color);
-            framebuffer.point(x, y);
+                    *pixel = cast_ray(&eye, &ray_direction, planets, cubos, materials, light, sun_center, orbit_radii, 0);
+                }
+            });
+        }
+    });
+
+    for y in 0..h {
+        for x in 0..w {
+            framebuffer.set_pixel_color(x as i32, y as i32, pixels[y * w + x]);
         }
     }
 }
@@ -227,12 +355,13 @@ pub fn render(
 //     años) el más lento, nada más que el tiempo entero está acelerado
 //     para que se note en pantalla.
 
-const RADIUS_SCALE: f32 = 0.4; // 1.0 radio terrestre = 0.4 unidades
-const DIST_SCALE: f32 = 5.0;   // 1.0 AU = 5.0 unidades
+const RADIUS_SCALE: f32 = 0.12; // 1.0 radio terrestre = 0.12 unidades (cabe sobre la mesa)
+const DIST_SCALE: f32 = 0.85;  // 1.0 AU = 0.85 unidades (Marte a 1.29, cabe dentro de la
+                                // pantalla de la mesa: SCREEN_HALF_Z = 1.55 en mesa.rs)
 const EARTH_ORBIT_SECONDS: f32 = 20.0;
 
 // Radios reales en "radios terrestres" (Tierra = 1.0)
-const SUN_RADIUS_REAL: f32 = 3.0; // el Sol real mide ~109; se recorta
+const SUN_RADIUS_REAL: f32 = 2.5; // el Sol real mide ~109; se recorta
                                    // a un tamaño que no tape todo el
                                    // sistema, pero sigue siendo, por
                                    // mucho, el cuerpo más grande.
@@ -357,89 +486,151 @@ fn crear_sistema_solar() -> Vec<Planet> {
     vec![sun, mercury, venus, earth, mars]
 }
 
+// Ventana de 800x600. El framebuffer se traza a menor resolución
+// (ventana / RENDER_DIVISOR) y se escala: con 2 se trazan 4 veces menos
+// rayos. Poner 1 para resolución completa si el equipo lo aguanta.
+const RENDER_DIVISOR: i32 = 2;
+
+enum Modo {
+    Persona, // primera persona: caminar y mirar
+    Orbital, // vista de diorama: rotar y acercar alrededor de la mesa
+}
+
 fn main() {
 
-    let window_width = config::WINDOW_WIDTH;
-    let window_height = config::WINDOW_HEIGHT;
+    let window_width = 900;
+    let window_height = 700;
 
-    let mut framebuffer = Framebuffer::new(window_width, window_height);
+    let mut framebuffer = Framebuffer::new(
+        window_width / RENDER_DIVISOR,
+        window_height / RENDER_DIVISOR,
+    );
 
     let (mut window, raylib_thread) = raylib::init()
         .size(window_width, window_height)
-        .title("Raytracer - Sistema Solar")
+        .title("Diorama - Interior de la nave")
         .build();
+
+    // El cursor queda capturado para mirar con el ratón (TAB lo libera).
+    window.disable_cursor();
 
     framebuffer.set_background_color(Color::BLACK);
     framebuffer.clear();
 
     let mut planets = crear_sistema_solar();
 
-    let sun_center = Vector3::zero();
+    // Origen común del planetario: sobre la mesa. Las órbitas se
+    // recalculan cada frame como origen + offset (nada se acumula).
+    let sun_center = planetario_origen();
 
-    // Posiciona todo antes del primer frame. orbital_angle arranca en
-    // 0.0, así que llamar update() con delta_time = 0.0 solo aplica la
-    // fórmula una vez (coloca cada planeta a su distancia, sobre el
-    // eje X) sin hacer avanzar nada todavía.
+    let cubos = crear_habitacion();
+    let obstaculos = obstaculos();
+
+    // Catálogo de materiales de la mesa (metal claro/oscuro, pantalla,
+    // polímero, indicador cian): genera sus texturas una sola vez, al
+    // arrancar. Los tamaños de textura de la pantalla y de la placa de
+    // controles se piden a mesa.rs para que la proporción coincida con
+    // la de la superficie real (celdas cuadradas, sin ovalar anillos).
+    let materials = crear_materiales(pantalla_texture_size(), consola_texture_size());
+
+    // Posiciona todo antes del primer frame (delta_time = 0.0 solo
+    // aplica la fórmula una vez).
     for planet in planets.iter_mut() {
         planet.update(0.0, sun_center);
     }
 
-    // La luz vive en el mismo punto que el Sol: el Sol de la escena es
-    // tanto la esfera que se ve como la fuente que ilumina a los
-    // demás. Un poco más intensa que antes, y con más ambiente, para
-    // que la escena se sienta más luminosa sin agregar ningún cálculo
-    // costoso (nada de sombras entre planetas ni rebotes todavía).
+    // La luz vive en el mismo punto que el Sol.
     let light = Luz::new(
         sun_center,
         Color::new(255, 244, 214, 255), // luz solar: blanco cálido
         1.7,
     );
 
-    // Cámara oblicua desde el arranque: con algo de pitch se ve el
-    // sistema "desde arriba y de costado", como en las referencias, en
-    // vez de mirarlo perfectamente de canto.
-    let mut camera = Camera::new(
-        sun_center,
-        22.0,
-        25.0_f32.to_radians(),
-        30.0_f32.to_radians(),
+    // Primera persona: frente a la mesa (lado +Z), mirando hacia -Z y
+    // un poco hacia abajo para ver el planetario.
+    let mut persona = CamaraPersona::new(
+        PLAYER_START_X,
+        PLAYER_START_Z,
+        EYE_HEIGHT,
+        0.0,
+        -12.0_f32.to_radians(),
     );
 
-    // Radios de las órbitas a dibujar (se excluye al Sol, que orbita a
-    // distancia 0). Se calcula una sola vez porque las distancias no
-    // cambian con el tiempo, solo el ángulo.
+    // Vista de diorama (tecla C): orbita alrededor del planetario, con
+    // distancia y pitch limitados para quedarse dentro de la nave.
+    let mut orbital = Camera::new(
+        sun_center,
+        4.0,
+        0.0,
+        25.0_f32.to_radians(),
+    );
+
+    let mut modo = Modo::Persona;
+    let mut mouse_capturado = true;
+
+    // Radios de las órbitas a dibujar (se excluye al Sol).
     let orbit_radii: Vec<f32> = planets
         .iter()
         .filter(|p| p.orbital.distance > 0.0)
         .map(|p| p.orbital.distance)
         .collect();
 
-    render(&mut framebuffer, &planets, &camera, &light, sun_center, &orbit_radii);
-
     // Main Loop
     while !window.window_should_close() {
 
-        // Tiempo real transcurrido desde el frame anterior. Todo lo
-        // que se mueve en este loop (cámara y planetas) se mueve en
-        // función de esto, no de "un paso por frame": es lo que hace
-        // que la simulación se vea igual de rápida sin importar el
-        // framerate de la máquina. Se recorta a 0.1s por si el primer
-        // frame (o cualquier otro) tarda un instante inusualmente
-        // largo, para no hacer "saltar" a los planetas de golpe.
         let delta_time = window.get_frame_time().min(0.1);
 
-        camera.handle_input(&window, delta_time);
-        camera.update(delta_time);
+        // C: cambiar entre primera persona y vista de diorama.
+        if window.is_key_pressed(KeyboardKey::KEY_C) {
+            modo = match modo {
+                Modo::Persona => {
+                    window.enable_cursor();
+                    Modo::Orbital
+                }
+                Modo::Orbital => {
+                    if mouse_capturado {
+                        window.disable_cursor();
+                    }
+                    Modo::Persona
+                }
+            };
+        }
+
+        // TAB: soltar / recapturar el cursor (solo en primera persona).
+        if window.is_key_pressed(KeyboardKey::KEY_TAB) && matches!(modo, Modo::Persona) {
+            mouse_capturado = !mouse_capturado;
+            if mouse_capturado {
+                window.disable_cursor();
+            } else {
+                window.enable_cursor();
+            }
+        }
+
+        let (eye, basis) = match modo {
+            Modo::Persona => {
+                persona.update(
+                    &window,
+                    delta_time,
+                    mouse_capturado,
+                    ROOM_HALF_X,
+                    ROOM_HALF_Z,
+                    PLAYER_RADIUS,
+                    &obstaculos,
+                );
+                (persona.eye, persona.basis())
+            }
+            Modo::Orbital => {
+                orbital.handle_input(&window, delta_time);
+                orbital.update(delta_time);
+                (orbital.eye, orbital.basis())
+            }
+        };
 
         for planet in planets.iter_mut() {
             planet.update(delta_time, sun_center);
         }
 
-        // Los planetas se mueven solos en cada frame (traslación
-        // orbital), así que ya no tiene sentido re-renderizar solo "si
-        // la cámara se movió": la escena cambia siempre. Por eso ahora
-        // se vuelve a trazar en cada vuelta del loop.
-        render(&mut framebuffer, &planets, &camera, &light, sun_center, &orbit_radii);
+        render(&mut framebuffer, &planets, &cubos, &materials, eye, basis, &light, sun_center, &orbit_radii);
 
         framebuffer.swap_buffers(&mut window, &raylib_thread);
     }
