@@ -12,7 +12,6 @@
 
 use raylib::prelude::*;
 
-use crate::config::INTERSECTION_EPSILON;
 use crate::ray_intersect::{Intersect, RayIntersect};
 
 pub struct Esfera {
@@ -72,9 +71,9 @@ impl RayIntersect for Esfera {
 
         // De las dos raíces se toma la menor que sea positiva: es la
         // cara de la esfera que mira hacia la cámara.
-        let t = if t1 > INTERSECTION_EPSILON {
+        let t = if t1 > 0.0001 {
             t1
-        } else if t2 > INTERSECTION_EPSILON {
+        } else if t2 > 0.0001 {
             t2
         } else {
             return Intersect::empty();
