@@ -21,6 +21,7 @@ mod laboratorio;
 mod techo;
 mod tars;
 mod compuerta;
+mod pasillo;
 
 use framebuffer::Framebuffer;
 use ray_intersect::{Intersect, RayIntersect};
@@ -574,8 +575,10 @@ fn main() {
     let geometria = crear_habitacion();
     let mut tars = tars::Tars::reposo();
     let mut puerta = compuerta::Compuerta::new();
-    let mut geometria_dinamica = Vec::with_capacity(14);
+    let mut puerta_espacio = pasillo::CompuertaEspacio::new();
+    let mut geometria_dinamica = Vec::with_capacity(15);
     puerta.construir(&mut geometria_dinamica);
+    puerta_espacio.construir(&mut geometria_dinamica);
     tars.construir(&mut geometria_dinamica);
     let cantidad_cubos = geometria.len() + geometria_dinamica.len();
     // Registrar emisores antes de mover los cubos a la BVH (mismos índices).
@@ -586,6 +589,8 @@ fn main() {
     let mut obstaculos = obstaculos();
     let indice_puerta = obstaculos.len();
     obstaculos.extend(puerta.obstaculos());
+    let indice_puerta_espacio = obstaculos.len();
+    obstaculos.push(puerta_espacio.obstaculo());
     let indice_tars = obstaculos.len();
     obstaculos.push(tars.obstaculo());
     let colisiones = colisiones::Colisiones::new(&contorno_nave(), WALL_THICKNESS)
@@ -634,7 +639,7 @@ fn main() {
     let mut suma_render = 0.0f64;
     let mut suma_presentacion = 0.0f64;
     let mut cuadros = 0u32;
-    let mut hud = format!("BVH: {} cubos | midiendo...\nF1 nativa  F2 75%  F3 50%  F4 dinamica  F5 datos\nESCLUSA: acercate al panel trasero; vuelve por el umbral", cantidad_cubos);
+    let mut hud = format!("BVH: {} cubos | midiendo...\nF1 nativa  F2 75%  F3 50%  F4 dinamica  F5 datos\nESCLUSA: panel trasero para entrar; puerta derecha para salir al espacio", cantidad_cubos);
     if cfg!(debug_assertions) {
         eprintln!("AVISO: compilacion debug. Para medir rendimiento: cargo run --release");
     }
@@ -694,6 +699,7 @@ fn main() {
                     &colisiones,
                     PLAYER_RADIUS,
                     puerta.abierta(),
+                    puerta_espacio.abierta(),
                     &obstaculos,
                 );
                 (persona.eye, persona.basis())
@@ -710,15 +716,19 @@ fn main() {
         let obstaculos_puerta = puerta.obstaculos();
         obstaculos[indice_puerta] = obstaculos_puerta[0];
         obstaculos[indice_puerta + 1] = obstaculos_puerta[1];
+        let cambio_puerta_espacio = puerta_espacio.actualizar(delta_time,
+            if matches!(modo, Modo::Persona) { Some(persona.eye) } else { None });
+        obstaculos[indice_puerta_espacio] = puerta_espacio.obstaculo();
 
         // La cámara ya colisionó con la posición anterior. Ahora TARS evita al
         // jugador y publica su nueva huella para el siguiente cuadro.
         let jugador = if matches!(modo, Modo::Persona) { Some(persona.eye) } else { None };
         let cambio_tars = tars.actualizar(delta_time, &colisiones, &obstaculos[..indice_tars], jugador);
         obstaculos[indice_tars] = tars.obstaculo();
-        if cambio_puerta || cambio_tars {
-            let mut geometria_dinamica = Vec::with_capacity(14);
+        if cambio_puerta || cambio_puerta_espacio || cambio_tars {
+            let mut geometria_dinamica = Vec::with_capacity(15);
             puerta.construir(&mut geometria_dinamica);
+            puerta_espacio.construir(&mut geometria_dinamica);
             tars.construir(&mut geometria_dinamica);
             cubos.actualizar_dinamicos(geometria_dinamica);
         }
@@ -750,7 +760,7 @@ fn main() {
         cuadros += 1;
         let transcurrido = reloj_estadisticas.elapsed().as_secs_f64();
         if transcurrido >= 0.75 {
-            hud = format!("{:.1} FPS | traza {:.1} ms | presenta {:.1} ms | {}x{} | {} cubos | {}\nF1 nativa  F2 75%  F3 50%  F4 auto:{}  F5 ocultar\nESCLUSA: acercate al panel trasero; vuelve por el umbral",
+            hud = format!("{:.1} FPS | traza {:.1} ms | presenta {:.1} ms | {}x{} | {} cubos | {}\nF1 nativa  F2 75%  F3 50%  F4 auto:{}  F5 ocultar\nESCLUSA: panel trasero para entrar; puerta derecha para salir al espacio",
                 cuadros as f64 / transcurrido,
                 suma_render * 1000.0 / cuadros as f64,
                 suma_presentacion * 1000.0 / cuadros as f64, rw, rh, cantidad_cubos,

@@ -89,6 +89,7 @@ pub fn obstaculos() -> Vec<Obstaculo> {
             max_z: centro.z + tamano.z * 0.5,
         });
     }
+    lista.extend(crate::pasillo::obstaculos());
     // Huella de la consola derecha; el espacio futuro de TARS queda transitable.
     for (u, ancho, fondo, profundidad) in huellas_comando() {
         // Divisiones cortas para aproximar la huella diagonal sin bloquear
@@ -267,6 +268,7 @@ pub fn crear_habitacion() -> Vec<Cubo> {
         punto(3),
         punto(4));
     construir_puerta_trasera(&mut cubos);
+    crate::pasillo::construir(&mut cubos);
 
     crate::techo::construir(&mut cubos);
 

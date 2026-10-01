@@ -1,6 +1,7 @@
 // Colisiones de primera persona en el plano XZ, independientes de la cámara.
 // El contorno de la nave es convexo y sus vértices están en orden antihorario.
 
+#[derive(Clone, Copy)]
 pub struct Obstaculo {
     pub min_x: f32,
     pub max_x: f32,
@@ -112,7 +113,8 @@ impl Colisiones {
 
     pub fn mover_con_compuerta(
         &self, x: f32, z: f32, dx: f32, dz: f32,
-        radio: f32, obstaculos: &[Obstaculo], puerta_abierta: bool, afuera: &mut bool,
+        radio: f32, obstaculos: &[Obstaculo], puerta_abierta: bool,
+        puerta_lateral_abierta: bool, afuera: &mut bool, en_espacio: &mut bool,
     ) -> (f32, f32) {
         assert!(radio > 0.0);
         let distancia = (dx * dx + dz * dz).sqrt();
@@ -120,15 +122,19 @@ impl Colisiones {
         let (sx, sz) = (dx / pasos as f32, dz / pasos as f32);
         let (mut x, mut z) = (x, z);
         for _ in 0..pasos {
+            let anterior_x = x;
             if !self.bloqueado_compuerta(x + sx, z, x, z, radio,
-                obstaculos, puerta_abierta, *afuera) {
+                obstaculos, puerta_abierta, puerta_lateral_abierta, *afuera, *en_espacio) {
                 x += sx;
-                self.actualizar_lado_puerta(x, z, radio, afuera);
+                self.actualizar_lado_puerta(x, z, anterior_x, radio,
+                    puerta_lateral_abierta, afuera, en_espacio);
             }
+            let anterior_x = x;
             if !self.bloqueado_compuerta(x, z + sz, x, z, radio,
-                obstaculos, puerta_abierta, *afuera) {
+                obstaculos, puerta_abierta, puerta_lateral_abierta, *afuera, *en_espacio) {
                 z += sz;
-                self.actualizar_lado_puerta(x, z, radio, afuera);
+                self.actualizar_lado_puerta(x, z, anterior_x, radio,
+                    puerta_lateral_abierta, afuera, en_espacio);
             }
         }
         (x, z)
@@ -138,23 +144,55 @@ impl Colisiones {
         self.limites.iter().all(|p| p.nx * x + p.nz * z >= p.minimo + radio)
     }
 
-    fn actualizar_lado_puerta(&self, x: f32, z: f32, radio: f32, afuera: &mut bool) {
+    fn actualizar_lado_puerta(
+        &self, x: f32, z: f32, anterior_x: f32, radio: f32,
+        puerta_lateral_abierta: bool, afuera: &mut bool, en_espacio: &mut bool,
+    ) {
         if *afuera && self.dentro_nave(x, z, radio) {
             *afuera = false;
+            *en_espacio = false;
         } else if !*afuera && z > 8.15 && x.abs() < 2.2 {
             *afuera = true;
+            *en_espacio = false;
+        } else if *afuera && !*en_espacio && puerta_lateral_abierta
+            && (z - crate::pasillo::PUERTA_Z).abs() < crate::pasillo::PUERTA_ANCHO * 0.5 - radio
+            && anterior_x < crate::pasillo::ANCHO_INTERIOR * 0.5
+                + crate::escena::WALL_THICKNESS + radio
+            && x >= crate::pasillo::ANCHO_INTERIOR * 0.5
+                + crate::escena::WALL_THICKNESS + radio {
+            *en_espacio = true;
+        } else if *afuera && *en_espacio && puerta_lateral_abierta
+            && (z - crate::pasillo::PUERTA_Z).abs() < crate::pasillo::PUERTA_ANCHO * 0.5 - radio
+            && anterior_x > crate::pasillo::ANCHO_INTERIOR * 0.5 - radio
+            && x <= crate::pasillo::ANCHO_INTERIOR * 0.5 - radio {
+            *en_espacio = false;
         }
     }
 
     fn bloqueado_compuerta(
         &self, x: f32, z: f32, anterior_x: f32, anterior_z: f32, radio: f32,
-        obstaculos: &[Obstaculo], puerta_abierta: bool, afuera: bool,
+        obstaculos: &[Obstaculo], puerta_abierta: bool, puerta_lateral_abierta: bool,
+        afuera: bool, en_espacio: bool,
     ) -> bool {
         if afuera {
             let cruce_retorno = puerta_abierta && anterior_z > 7.5 && z <= 7.5
                 && x.abs() < 1.90 - radio;
             if self.dentro_nave(x, z, radio) && !cruce_retorno { return true; }
-            if x.abs() > 40.0 || z.abs() > 40.0 { return true; }
+            if en_espacio {
+                if x.abs() > 40.0 || z.abs() > 40.0 { return true; }
+            } else {
+                let limite_x = crate::pasillo::ANCHO_INTERIOR * 0.5 - radio;
+                let vano_lateral = puerta_lateral_abierta
+                    && (z - crate::pasillo::PUERTA_Z).abs()
+                        < crate::pasillo::PUERTA_ANCHO * 0.5 - radio
+                    && x > limite_x
+                    && x <= crate::pasillo::ANCHO_INTERIOR * 0.5
+                        + crate::escena::WALL_THICKNESS + radio * 1.5;
+                if (x < -limite_x || x > limite_x) && !vano_lateral
+                    || z > crate::pasillo::FIN_Z - radio {
+                    return true;
+                }
+            }
         } else if self.limites.iter().enumerate().any(|(i, p)| {
             let fuera = p.nx * x + p.nz * z < p.minimo + radio;
             let vano = i == 4 && puerta_abierta && x.abs() < 1.90 - radio
@@ -170,5 +208,44 @@ impl Colisiones {
             let dz = z - cercano_z;
             dx * dx + dz * dz < radio * radio
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use raylib::prelude::Vector3;
+
+    #[test]
+    fn cruza_y_regresa_por_compuerta_lateral_abierta() {
+        let contorno = crate::escena::contorno_nave();
+        let colisiones = Colisiones::new(&contorno, crate::escena::WALL_THICKNESS);
+        let mut puerta = crate::pasillo::CompuertaEspacio::new();
+        let jugador = Vector3::new(
+            crate::pasillo::ANCHO_INTERIOR * 0.5 + crate::escena::WALL_THICKNESS * 0.5,
+            crate::escena::EYE_HEIGHT,
+            crate::pasillo::PUERTA_Z,
+        );
+        for _ in 0..100 { puerta.actualizar(1.0 / 60.0, Some(jugador)); }
+        assert!(puerta.abierta());
+
+        let mut obstaculos = crate::pasillo::obstaculos();
+        obstaculos.push(puerta.obstaculo());
+        let mut afuera = true;
+        let mut en_espacio = false;
+        let (x, z) = colisiones.mover_con_compuerta(
+            0.0, crate::pasillo::PUERTA_Z, 5.0, 0.0,
+            crate::escena::PLAYER_RADIUS, &obstaculos, true, puerta.abierta(),
+            &mut afuera, &mut en_espacio,
+        );
+        assert!(x > crate::pasillo::ANCHO_INTERIOR * 0.5);
+        assert!(en_espacio);
+
+        let (x, _) = colisiones.mover_con_compuerta(
+            x, z, -5.0, 0.0, crate::escena::PLAYER_RADIUS,
+            &obstaculos, true, puerta.abierta(), &mut afuera, &mut en_espacio,
+        );
+        assert!(x < crate::pasillo::ANCHO_INTERIOR * 0.5);
+        assert!(!en_espacio);
     }
 }
