@@ -1,9 +1,0 @@
-C:\Users\mache\Desktop\U 6S\GRAFICAS\ProyectoUniverso\Proyecto2_Universe\nave\target\release\build\clang-sys-c679f367f8ac8055\build_script_build-c679f367f8ac8055.d: C:\Users\mache\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\clang-sys-1.9.1\build.rs C:\Users\mache\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\clang-sys-1.9.1\build\macros.rs C:\Users\mache\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\clang-sys-1.9.1\build\common.rs C:\Users\mache\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\clang-sys-1.9.1\build\dynamic.rs C:\Users\mache\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\clang-sys-1.9.1\build\static.rs
-
-C:\Users\mache\Desktop\U 6S\GRAFICAS\ProyectoUniverso\Proyecto2_Universe\nave\target\release\build\clang-sys-c679f367f8ac8055\build_script_build-c679f367f8ac8055.exe: C:\Users\mache\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\clang-sys-1.9.1\build.rs C:\Users\mache\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\clang-sys-1.9.1\build\macros.rs C:\Users\mache\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\clang-sys-1.9.1\build\common.rs C:\Users\mache\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\clang-sys-1.9.1\build\dynamic.rs C:\Users\mache\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\clang-sys-1.9.1\build\static.rs
-
-C:\Users\mache\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\clang-sys-1.9.1\build.rs:
-C:\Users\mache\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\clang-sys-1.9.1\build\macros.rs:
-C:\Users\mache\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\clang-sys-1.9.1\build\common.rs:
-C:\Users\mache\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\clang-sys-1.9.1\build\dynamic.rs:
-C:\Users\mache\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\clang-sys-1.9.1\build\static.rs:

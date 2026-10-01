@@ -11,6 +11,11 @@
 
 use raylib::prelude::*;
 
+// Módulo privado de escena: arco.rs va en src/, sin editar main.rs.
+#[path = "arco.rs"]
+mod arco;
+pub const MOSTRAR_ARCO: bool = true;
+
 use crate::cubo::Cubo;
 use crate::material::{PARED_NAVE, PISO_NAVE, REFUERZO_NAVE, MONITOR_COMANDO, CONTROLES_COMANDO, INDICADOR, HOJA_COMPUERTA, PANEL_ESCLUSA};
 use crate::mesa::{construir_mesa, obstaculos_mesa as mesa_obstaculos};
@@ -75,6 +80,7 @@ fn pilares_laterales() -> Vec<(Vector3, Vector3)> {
 
 pub fn obstaculos() -> Vec<Obstaculo> {
     let mut lista = mesa_obstaculos();
+    if MOSTRAR_ARCO { lista.extend(arco::obstaculos()); }
     for (centro, tamano) in pilares_laterales() {
         lista.push(Obstaculo {
             min_x: centro.x - tamano.x * 0.5,
@@ -272,6 +278,7 @@ pub fn crear_habitacion() -> Vec<Cubo> {
     construir_comando_derecho(&mut cubos);
     construir_servicios_traseros(&mut cubos);
     crate::laboratorio::construir(&mut cubos);
+    if MOSTRAR_ARCO { arco::construir(&mut cubos); }
 
     // Se conserva la mesa, el planetario y sus materiales existentes.
     construir_mesa(&mut cubos);
@@ -321,11 +328,11 @@ fn huellas_comando() -> Vec<(f32, f32, f32, f32)> {
     huellas
 }
 
-// Reserva de TARS en la pared lateral derecha original, junto a la cabina.
-// Entre sus columnas existentes; queda transitable hasta agregar el personaje.
+// Reserva de TARS del lado de la mesa, delante del nuevo tabique derecho.
+// No se registra como obstáculo hasta agregar el personaje.
 #[allow(dead_code)]
 pub fn espacio_tars() -> Obstaculo {
-    Obstaculo { min_x: 7.90, max_x: 9.65, min_z: -8.90, max_z: -6.90 }
+    arco::espacio_tars()
 }
 
 fn construir_comando_derecho(cubos: &mut Vec<Cubo>) {
