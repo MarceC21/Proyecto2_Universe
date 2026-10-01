@@ -95,6 +95,12 @@ fn cast_ray(
         closest_distance = visor.distance;
         closest_intersect = visor;
     }
+    let ventana = escena::exterior::intersectar_ventanas(
+        ray_origin, ray_direction, closest_distance);
+    if ventana.is_intersecting && ventana.distance < closest_distance {
+        closest_distance = ventana.distance;
+        closest_intersect = ventana;
+    }
 
     // Los anillos ya no solo aparecen cuando el rayo no choca con nada:
     // ahora hay paredes y una mesa, así que el anillo solo se dibuja si
@@ -109,8 +115,10 @@ fn cast_ray(
         return filtrar_vidrios(sky_color(ray_direction), ray_origin, ray_direction, f32::INFINITY);
     }
 
-    let color = if closest_intersect.material == Some(material::VIDRIO_LABORATORIO) {
-        shade_visor(&closest_intersect, ray_direction, materials, light,
+    let transparente = closest_intersect.material
+        .map_or(false, |id| materials[id].transparencia > 0.0);
+    let color = if transparente {
+        shade_vidrio(&closest_intersect, ray_direction, materials, light,
             planets, cubos, sun_center, orbit_radii, depth)
     } else {
         shade(&closest_intersect, ray_direction, materials, light,
@@ -119,8 +127,8 @@ fn cast_ray(
     filtrar_vidrios(color, ray_origin, ray_direction, closest_distance)
 }
 
-// Solo el techo conserva su filtro anterior. El visor del laboratorio ya
-// se traza como volumen refractivo; no se vuelve a pintar encima del color.
+// Solo el techo conserva su filtro anterior. Laboratorio y cabina ya
+// se trazan como volumenes refractivos; no se pintan encima del color.
 fn filtrar_vidrios(color: Color, origen: &Vector3, direccion: &Vector3, limite: f32) -> Color {
     techo::filtrar_ventana(color, origen, direccion, limite)
 }
@@ -164,12 +172,12 @@ mod pruebas_optica {
 }
 
 #[allow(clippy::too_many_arguments)]
-fn shade_visor(
+fn shade_vidrio(
     hit: &Intersect, direccion: &Vector3, materials: &[Material],
     light: &Iluminacion, planets: &[Planet], cubos: &Bvh,
     sun_center: Vector3, orbit_radii: &[f32], depth: Profundidad,
 ) -> Color {
-    let material = &materials[material::VIDRIO_LABORATORIO];
+    let material = &materials[hit.material.expect("El vidrio debe tener material")];
     let entrando = direccion.dot(hit.normal) < 0.0;
     let normal = if entrando { hit.normal } else { hit.normal * -1.0 };
     let eta = if entrando { 1.0 / material.ior } else { material.ior };
@@ -319,7 +327,7 @@ fn shade(
 // Visibilidad hasta la luz: las esferas en movimiento se prueban aparte.
 // El Sol emisor no se bloquea a si mismo. Los vidrios transmiten los rayos
 // de sombra sin desviarlos (aproximacion sin causticas). Los rayos de vista
-// y reflejo SI se refractan en el visor; no esta en la BVH opaca.
+// y reflejo SI se refractan en laboratorio y cabina, fuera de la BVH opaca.
 fn bloqueado(origen:&Vector3,direccion:&Vector3,limite:f32,
              omitir:Option<usize>,cubos:&Bvh,planets:&[Planet])->bool {
     for planeta in planets {

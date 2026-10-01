@@ -14,6 +14,8 @@ use raylib::prelude::*;
 // Módulo privado de escena: arco.rs va en src/, sin editar main.rs.
 #[path = "arco.rs"]
 mod arco;
+#[path = "exterior.rs"]
+pub mod exterior;
 pub const MOSTRAR_ARCO: bool = true;
 
 use crate::cubo::Cubo;
@@ -90,6 +92,7 @@ pub fn obstaculos() -> Vec<Obstaculo> {
         });
     }
     lista.extend(crate::pasillo::obstaculos());
+    lista.extend(exterior::obstaculos());
     // Huella de la consola derecha; el espacio futuro de TARS queda transitable.
     for (u, ancho, fondo, profundidad) in huellas_comando() {
         // Divisiones cortas para aproximar la huella diagonal sin bloquear
@@ -234,25 +237,12 @@ pub fn crear_habitacion() -> Vec<Cubo> {
         Color::WHITE, 0.0, 0.0,
     ).con_material(PISO_NAVE, Some(1.2)));
 
-    // Tres paredes delanteras con vanos para la ventana central y las dos laterales.
-    pared_con_ventana(
-        &mut cubos,
-        punto(0),
-        punto(1),
-        4.6, 0.95, 4.25,
-    );
-    pared_con_ventana(
-        &mut cubos,
-        punto(0),
-        punto(7),
-        2.25, 0.90, 4.15,
-    );
-    pared_con_ventana(
-        &mut cubos,
-        punto(2),
-        punto(1),
-        2.25, 0.90, 4.15,
-    );
+    // Las mismas medidas construyen los vanos y sus cristales. Se conservan
+    // los antepechos, el contorno y las posiciones de toda la cabina.
+    for ventana in exterior::ventanas() {
+        pared_con_ventana(&mut cubos, ventana.a, ventana.b,
+            ventana.ancho, ventana.abajo, ventana.arriba);
+    }
 
     // Costados largos, diagonales traseras y pared posterior.
     pared_completa(&mut cubos,
@@ -281,6 +271,7 @@ pub fn crear_habitacion() -> Vec<Cubo> {
     // Se conserva la mesa, el planetario y sus materiales existentes.
     construir_mesa(&mut cubos);
     crate::cabina::construir_cabina(&mut cubos, &vertices, t);
+    exterior::construir(&mut cubos);
     cubos
 }
 

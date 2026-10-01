@@ -12,7 +12,7 @@
 // reflejada R = D - 2(D.N)N (esto es reflexión trazada, distinta del
 // brillo especular, que solo es un punto de luz).
 //
-// El visor del laboratorio usa transparencia e ior para trazar rayos
+// Los vidrios de laboratorio y cabina usan transparencia e ior para trazar rayos
 // refractados en sus dos superficies, ademas de la reflexion de Fresnel.
 //
 // Las texturas se generan una sola vez, aquí, al arrancar.
@@ -46,6 +46,9 @@ pub const TARS_NEGRO: usize = 19;
 pub const TARS_NOMBRE: usize = 20;
 pub const TARS_BRAILLE: usize = 21;
 pub const VIDRIO_LABORATORIO: usize = 22;
+pub const VIDRIO_CABINA: usize = 23;
+pub const PANEL_SOLAR: usize = 24;
+pub const BALIZA_SALIDA: usize = 25;
 
 #[allow(dead_code)]
 pub struct Material {
@@ -57,7 +60,7 @@ pub struct Material {
     pub ks: f32,             // coeficiente especular
     pub shininess: f32,      // exponente especular (más alto = brillo más pequeño)
     pub reflectividad: f32,  // 0..1: peso del rayo reflejado
-    pub transparencia: f32,  // 0..1: transmision del visor refractivo
+    pub transparencia: f32,  // 0..1: transmision de los vidrios refractivos
     pub ior: f32,            // indice de refraccion (aire = 1.0)
     pub emision: f32,        // 0..1+: cuánto color propio se suma sin depender de la luz
 }
@@ -221,6 +224,26 @@ pub fn crear_materiales(pantalla_size: (usize, usize), consola_size: (usize, usi
             ka: 0.12, kd: 0.08, ks: 0.55, shininess: 120.0,
             reflectividad: 0.043, transparencia: 0.98, ior: 1.52, emision: 0.0,
         },
+        Material {
+            nombre: "Cristal panoramico de cabina",
+            textura: textura::solida(Color::new(252, 254, 255, 255)),
+            albedo: Color::WHITE,
+            ka: 0.10, kd: 0.04, ks: 0.40, shininess: 160.0,
+            reflectividad: 0.04, transparencia: 0.995, ior: 1.50, emision: 0.0,
+        },
+        Material {
+            nombre: "Celdas fotovoltaicas azul oscuro",
+            textura: textura_panel_solar(), albedo: Color::WHITE,
+            ka: 0.65, kd: 0.50, ks: 0.35, shininess: 96.0,
+            reflectividad: 0.06, transparencia: 0.0, ior: 1.0, emision: 0.0,
+        },
+        Material {
+            nombre: "Baliza exterior de acceso",
+            textura: textura::solida(Color::new(90, 235, 205, 255)),
+            albedo: Color::WHITE,
+            ka: 0.0, kd: 0.0, ks: 0.0, shininess: 1.0,
+            reflectividad: 0.0, transparencia: 0.0, ior: 1.0, emision: 1.0,
+        },
     ]
 }
 
@@ -234,6 +257,29 @@ fn textura_vidrio_laboratorio() -> Textura {
             if borde < 2 {
                 textura.set(x, y, Color::new(222, 246, 251, 255));
             }
+        }
+    }
+    textura
+}
+
+// Un mosaico repetible de 4 x 4 celdas; barras colectoras y contactos finos.
+// Solo se genera al iniciar. Comparte el muestreo UV del resto de materiales.
+fn textura_panel_solar() -> Textura {
+    let mut textura = Textura::new(256, 256, Color::new(12, 24, 43, 255));
+    for y in 0i32..256 {
+        for x in 0i32..256 {
+            let (u,v) = (x%64,y%64);
+            let variacion = ((x/64+y/64)%3) as u8*3;
+            let color = if u<3 || v<3 {
+                Color::new(93, 115, 136, 255)
+            } else if u==21 || u==42 {
+                Color::new(119, 153, 181, 255)
+            } else if v%8==0 {
+                Color::new(35, 69, 108, 255)
+            } else {
+                Color::new(20+variacion, 44+variacion, 83+variacion, 255)
+            };
+            textura.set(x,y,color);
         }
     }
     textura
