@@ -33,7 +33,7 @@ impl Textura {
         self.pixels[yi * self.width + xi]
     }
 
-    fn set(&mut self, x: i32, y: i32, c: Color) {
+    pub(crate) fn set(&mut self, x: i32, y: i32, c: Color) {
         if x >= 0 && y >= 0 && (x as usize) < self.width && (y as usize) < self.height {
             self.pixels[y as usize * self.width + x as usize] = c;
         }
@@ -64,7 +64,7 @@ impl Textura {
 
     // ----- Utilidades de dibujo (solo para generar texturas) -----
 
-    fn fill_rect(&mut self, x: i32, y: i32, w: i32, h: i32, c: Color) {
+    pub(crate) fn fill_rect(&mut self, x: i32, y: i32, w: i32, h: i32, c: Color) {
         for yy in y..y + h {
             for xx in x..x + w {
                 self.set(xx, yy, c);

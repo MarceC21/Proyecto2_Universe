@@ -42,6 +42,10 @@ pub const HOJA_COMPUERTA: usize = 14;
 pub const PANEL_ESCLUSA: usize = 15;
 pub const LUZ_LABORATORIO: usize = 16;
 pub const BOTON_ROJO: usize = 17;
+pub const TARS_CASCO: usize = 18;
+pub const TARS_NEGRO: usize = 19;
+pub const TARS_NOMBRE: usize = 20;
+pub const TARS_BRAILLE: usize = 21;
 
 #[allow(dead_code)]
 pub struct Material {
@@ -189,6 +193,26 @@ pub fn crear_materiales(pantalla_size: (usize, usize), consola_size: (usize, usi
             textura: textura::solida(Color::new(230,56,38,255)), albedo: Color::WHITE,
             ka: 0.0, kd: 0.0, ks: 0.0, shininess: 1.0,
             reflectividad: 0.0, transparencia: 0.0, ior: 1.0, emision: 0.9,
+        },
+        Material {
+            nombre: "Casco de TARS", textura: crate::tars::textura_casco(), albedo: Color::WHITE,
+            ka: 0.48, kd: 0.65, ks: 0.40, shininess: 48.0,
+            reflectividad: 0.0, transparencia: 0.0, ior: 1.0, emision: 0.0,
+        },
+        Material {
+            nombre: "Juntas de TARS", textura: crate::tars::textura_negro(), albedo: Color::WHITE,
+            ka: 0.48, kd: 0.65, ks: 0.10, shininess: 48.0,
+            reflectividad: 0.0, transparencia: 0.0, ior: 1.0, emision: 0.0,
+        },
+        Material {
+            nombre: "Nombre de TARS", textura: crate::tars::textura_nombre(), albedo: Color::WHITE,
+            ka: 0.48, kd: 0.65, ks: 0.30, shininess: 48.0,
+            reflectividad: 0.0, transparencia: 0.0, ior: 1.0, emision: 0.0,
+        },
+        Material {
+            nombre: "Braille de TARS", textura: crate::tars::textura_braille(), albedo: Color::WHITE,
+            ka: 0.48, kd: 0.65, ks: 0.30, shininess: 48.0,
+            reflectividad: 0.0, transparencia: 0.0, ior: 1.0, emision: 0.0,
         },
     ]
 }

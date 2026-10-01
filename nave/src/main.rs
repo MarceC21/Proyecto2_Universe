@@ -19,6 +19,8 @@ mod colisiones;
 mod cabina;
 mod laboratorio;
 mod techo;
+mod tars;
+mod compuerta;
 
 use framebuffer::Framebuffer;
 use ray_intersect::{Intersect, RayIntersect};
@@ -545,8 +547,8 @@ enum Modo {
 
 fn main() {
 
-    let window_width = 900;
-    let window_height = 700;
+    let window_width = 1000;
+    let window_height = 800;
 
     let (mut window, raylib_thread) = raylib::init()
         .size(window_width, window_height)
@@ -570,12 +572,22 @@ fn main() {
     let sun_center = planetario_origen();
 
     let geometria = crear_habitacion();
-    let cantidad_cubos = geometria.len();
+    let mut tars = tars::Tars::reposo();
+    let mut puerta = compuerta::Compuerta::new();
+    let mut geometria_dinamica = Vec::with_capacity(14);
+    puerta.construir(&mut geometria_dinamica);
+    tars.construir(&mut geometria_dinamica);
+    let cantidad_cubos = geometria.len() + geometria_dinamica.len();
     // Registrar emisores antes de mover los cubos a la BVH (mismos índices).
     let light = Iluminacion::new(Luz::new(sun_center,
         Color::new(255,244,214,255),1.7), &geometria);
-    let cubos = Bvh::new(geometria);
-    let obstaculos = obstaculos();
+    let mut cubos = Bvh::new(geometria);
+    cubos.actualizar_dinamicos(geometria_dinamica);
+    let mut obstaculos = obstaculos();
+    let indice_puerta = obstaculos.len();
+    obstaculos.extend(puerta.obstaculos());
+    let indice_tars = obstaculos.len();
+    obstaculos.push(tars.obstaculo());
     let colisiones = colisiones::Colisiones::new(&contorno_nave(), WALL_THICKNESS)
         .con_cajas(cabina::obstaculos_cabina(&contorno_nave(), WALL_THICKNESS))
         .con_cajas(laboratorio::obstaculos());
@@ -622,7 +634,7 @@ fn main() {
     let mut suma_render = 0.0f64;
     let mut suma_presentacion = 0.0f64;
     let mut cuadros = 0u32;
-    let mut hud = format!("BVH: {} cubos | midiendo...\nF1 nativa  F2 75%  F3 50%  F4 dinamica  F5 datos", cantidad_cubos);
+    let mut hud = format!("BVH: {} cubos | midiendo...\nF1 nativa  F2 75%  F3 50%  F4 dinamica  F5 datos\nESCLUSA: acercate al panel trasero; vuelve por el umbral", cantidad_cubos);
     if cfg!(debug_assertions) {
         eprintln!("AVISO: compilacion debug. Para medir rendimiento: cargo run --release");
     }
@@ -681,6 +693,7 @@ fn main() {
                     mouse_capturado,
                     &colisiones,
                     PLAYER_RADIUS,
+                    puerta.abierta(),
                     &obstaculos,
                 );
                 (persona.eye, persona.basis())
@@ -691,6 +704,24 @@ fn main() {
                 (orbital.eye, orbital.basis())
             }
         };
+
+        let cambio_puerta = puerta.actualizar(delta_time,
+            if matches!(modo, Modo::Persona) { Some(persona.eye) } else { None });
+        let obstaculos_puerta = puerta.obstaculos();
+        obstaculos[indice_puerta] = obstaculos_puerta[0];
+        obstaculos[indice_puerta + 1] = obstaculos_puerta[1];
+
+        // La cámara ya colisionó con la posición anterior. Ahora TARS evita al
+        // jugador y publica su nueva huella para el siguiente cuadro.
+        let jugador = if matches!(modo, Modo::Persona) { Some(persona.eye) } else { None };
+        let cambio_tars = tars.actualizar(delta_time, &colisiones, &obstaculos[..indice_tars], jugador);
+        obstaculos[indice_tars] = tars.obstaculo();
+        if cambio_puerta || cambio_tars {
+            let mut geometria_dinamica = Vec::with_capacity(14);
+            puerta.construir(&mut geometria_dinamica);
+            tars.construir(&mut geometria_dinamica);
+            cubos.actualizar_dinamicos(geometria_dinamica);
+        }
 
         for planet in planets.iter_mut() {
             planet.update(delta_time, sun_center);
@@ -719,7 +750,7 @@ fn main() {
         cuadros += 1;
         let transcurrido = reloj_estadisticas.elapsed().as_secs_f64();
         if transcurrido >= 0.75 {
-            hud = format!("{:.1} FPS | traza {:.1} ms | presenta {:.1} ms | {}x{} | {} cubos | {}\nF1 nativa  F2 75%  F3 50%  F4 auto:{}  F5 ocultar",
+            hud = format!("{:.1} FPS | traza {:.1} ms | presenta {:.1} ms | {}x{} | {} cubos | {}\nF1 nativa  F2 75%  F3 50%  F4 auto:{}  F5 ocultar\nESCLUSA: acercate al panel trasero; vuelve por el umbral",
                 cuadros as f64 / transcurrido,
                 suma_render * 1000.0 / cuadros as f64,
                 suma_presentacion * 1000.0 / cuadros as f64, rw, rh, cantidad_cubos,

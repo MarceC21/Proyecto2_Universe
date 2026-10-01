@@ -63,7 +63,7 @@ impl Colisiones {
     }
 
     pub fn con_cajas(mut self, cajas: Vec<CajaOrientada>) -> Self {
-        self.cajas = cajas;
+        self.cajas.extend(cajas);
         self
     }
 
@@ -108,5 +108,67 @@ impl Colisiones {
             }
         }
         (x, z)
+    }
+
+    pub fn mover_con_compuerta(
+        &self, x: f32, z: f32, dx: f32, dz: f32,
+        radio: f32, obstaculos: &[Obstaculo], puerta_abierta: bool, afuera: &mut bool,
+    ) -> (f32, f32) {
+        assert!(radio > 0.0);
+        let distancia = (dx * dx + dz * dz).sqrt();
+        let pasos = (distancia / (radio * 0.5)).ceil().max(1.0) as usize;
+        let (sx, sz) = (dx / pasos as f32, dz / pasos as f32);
+        let (mut x, mut z) = (x, z);
+        for _ in 0..pasos {
+            if !self.bloqueado_compuerta(x + sx, z, x, z, radio,
+                obstaculos, puerta_abierta, *afuera) {
+                x += sx;
+                self.actualizar_lado_puerta(x, z, radio, afuera);
+            }
+            if !self.bloqueado_compuerta(x, z + sz, x, z, radio,
+                obstaculos, puerta_abierta, *afuera) {
+                z += sz;
+                self.actualizar_lado_puerta(x, z, radio, afuera);
+            }
+        }
+        (x, z)
+    }
+
+    fn dentro_nave(&self, x: f32, z: f32, radio: f32) -> bool {
+        self.limites.iter().all(|p| p.nx * x + p.nz * z >= p.minimo + radio)
+    }
+
+    fn actualizar_lado_puerta(&self, x: f32, z: f32, radio: f32, afuera: &mut bool) {
+        if *afuera && self.dentro_nave(x, z, radio) {
+            *afuera = false;
+        } else if !*afuera && z > 8.15 && x.abs() < 2.2 {
+            *afuera = true;
+        }
+    }
+
+    fn bloqueado_compuerta(
+        &self, x: f32, z: f32, anterior_x: f32, anterior_z: f32, radio: f32,
+        obstaculos: &[Obstaculo], puerta_abierta: bool, afuera: bool,
+    ) -> bool {
+        if afuera {
+            let cruce_retorno = puerta_abierta && anterior_z > 7.5 && z <= 7.5
+                && x.abs() < 1.90 - radio;
+            if self.dentro_nave(x, z, radio) && !cruce_retorno { return true; }
+            if x.abs() > 40.0 || z.abs() > 40.0 { return true; }
+        } else if self.limites.iter().enumerate().any(|(i, p)| {
+            let fuera = p.nx * x + p.nz * z < p.minimo + radio;
+            let vano = i == 4 && puerta_abierta && x.abs() < 1.90 - radio
+                && anterior_x.abs() < 1.90 - radio;
+            fuera && !vano
+        }) {
+            return true;
+        }
+        obstaculos.iter().any(|o| {
+            let cercano_x = x.clamp(o.min_x, o.max_x);
+            let cercano_z = z.clamp(o.min_z, o.max_z);
+            let dx = x - cercano_x;
+            let dz = z - cercano_z;
+            dx * dx + dz * dz < radio * radio
+        })
     }
 }

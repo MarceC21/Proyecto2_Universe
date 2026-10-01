@@ -17,7 +17,7 @@ mod arco;
 pub const MOSTRAR_ARCO: bool = true;
 
 use crate::cubo::Cubo;
-use crate::material::{PARED_NAVE, PISO_NAVE, REFUERZO_NAVE, MONITOR_COMANDO, CONTROLES_COMANDO, INDICADOR, HOJA_COMPUERTA, PANEL_ESCLUSA};
+use crate::material::{PARED_NAVE, PISO_NAVE, REFUERZO_NAVE, MONITOR_COMANDO, CONTROLES_COMANDO, INDICADOR, PANEL_ESCLUSA};
 use crate::mesa::{construir_mesa, obstaculos_mesa as mesa_obstaculos};
 
 pub use crate::mesa::planetario_origen;
@@ -100,10 +100,6 @@ pub fn obstaculos() -> Vec<Obstaculo> {
                 paso, fondo, profundidad));
         }
     }
-    // Marco de puerta y hojas cerradas. La apertura futura también deberá
-    // actualizar estas colisiones y permitir cruzar el límite posterior.
-    lista.push(Obstaculo { min_x: -2.40, max_x: 2.40,
-        min_z: ROOM_BACK_Z - 0.48, max_z: ROOM_BACK_Z + 0.15 });
     // Conductos del lado opuesto, divididos para seguir la pared diagonal.
     for i in 0..20 {
         let b = huella_comando(8.30 + (i as f32 + 0.5) * 0.20, 0.20, 0.27, 0.54);
@@ -303,6 +299,11 @@ fn punto_comando(u: f32, y: f32, fondo: f32) -> Vector3 {
     Vector3::new(ax + tx * u - tz * d, y, az + tz * u + tx * d)
 }
 
+pub fn control_esclusa() -> Vector3 {
+    let columnas = columnas_comando();
+    punto_comando((columnas[2] + columnas[3]) * 0.5, 2.18, 0.31)
+}
+
 fn huella_comando(u: f32, ancho: f32, fondo: f32, profundidad: f32) -> Obstaculo {
     let (_, _, tx, tz, _) = marco_comando();
     let p = punto_comando(u, 0.0, fondo);
@@ -377,8 +378,7 @@ fn construir_comando_derecho(cubos: &mut Vec<Cubo>) {
     }
 }
 
-// Vano real de la compuerta: las hojas son piezas separadas del casco.
-// Estática por ahora: al animarla habrá que actualizar BVH y colisiones.
+// El marco queda estático; las hojas deslizantes viven en compuerta.rs.
 fn construir_puerta_trasera(cubos: &mut Vec<Cubo>) {
     let z = ROOM_BACK_Z;
     let ancho = 3.80;
@@ -395,12 +395,7 @@ fn construir_puerta_trasera(cubos: &mut Vec<Cubo>) {
         // Jambas y carriles gruesos con tira de estado interior.
         bloque(signo * 2.15, 2.35, z - 0.15, 0.50, 4.70, 0.66, REFUERZO_NAVE);
         bloque(signo * 1.96, 2.35, z - 0.49, 0.045, 3.95, 0.025, INDICADOR);
-        // Dos hojas independientes, unidas por una junta central oscura.
-        bloque(signo * 0.9525, alto * 0.5, z - 0.06,
-            1.895, alto, 0.26, HOJA_COMPUERTA);
     }
-    // Sello central detrás de la junta, para que no se filtre el skybox.
-    bloque(0.0, alto * 0.5, z + 0.095, 0.045, alto, 0.05, REFUERZO_NAVE);
     bloque(0.0, (alto + ROOM_HEIGHT) * 0.5, z,
         ancho, ROOM_HEIGHT - alto, WALL_THICKNESS, PARED_NAVE);
     bloque(0.0, 4.78, z - 0.15, 4.80, 0.56, 0.66, REFUERZO_NAVE);

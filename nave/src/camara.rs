@@ -196,6 +196,7 @@ const MAX_LOOK_PITCH_DEG: f32 = 85.0;
 
 pub struct CamaraPersona {
     pub eye: Vector3,
+    afuera: bool,
     yaw: f32,
     pitch: f32,
     velocity_x: f32,
@@ -207,6 +208,7 @@ impl CamaraPersona {
     pub fn new(x: f32, z: f32, eye_height: f32, yaw: f32, pitch: f32) -> Self {
         Self {
             eye: Vector3::new(x, eye_height, z),
+            afuera: false,
             yaw,
             pitch,
             velocity_x: 0.0,
@@ -233,6 +235,7 @@ impl CamaraPersona {
         mouse_look: bool,
         colisiones: &Colisiones,
         radius: f32,
+        puerta_abierta: bool,
         obstacles: &[Obstaculo],
     ) {
         // --- Mirar: ratón (si está capturado) y flechas ---
@@ -292,8 +295,9 @@ impl CamaraPersona {
         // La cámara solicita el desplazamiento; colisiones resuelve el recorrido.
         let dx = self.velocity_x * delta_time;
         let dz = self.velocity_z * delta_time;
-        let (x, z) = colisiones.mover(
+        let (x, z) = colisiones.mover_con_compuerta(
             self.eye.x, self.eye.z, dx, dz, radius, obstacles,
+            puerta_abierta, &mut self.afuera,
         );
         if (x - (self.eye.x + dx)).abs() > 0.00001 {
             self.velocity_x = 0.0;

@@ -1,5 +1,5 @@
 // Jerarquía de cajas envolventes para geometría estática. Sin dependencias nuevas.
-// Construir una vez; reconstruir si se mueve alguno de los cubos contenidos.
+// La nave se construye una vez. El grupo móvil tiene su propia BVH pequeña.
 use raylib::prelude::*;
 use crate::cubo::Cubo;
 use crate::ray_intersect::{Intersect, RayIntersect};
@@ -16,6 +16,7 @@ pub struct Bvh {
     cubos: Vec<Cubo>,
     indices: Vec<usize>,
     nodos: Vec<Nodo>,
+    dinamicos: Option<Box<Bvh>>,
 }
 
 fn componentes(v: &Vector3) -> [f32; 3] { [v.x, v.y, v.z] }
@@ -23,9 +24,14 @@ fn componentes(v: &Vector3) -> [f32; 3] { [v.x, v.y, v.z] }
 impl Bvh {
     pub fn new(cubos: Vec<Cubo>) -> Self {
         let n = cubos.len();
-        let mut bvh = Self { cubos, indices: (0..n).collect(), nodos: Vec::with_capacity(n * 2) };
+        let mut bvh = Self { cubos, indices: (0..n).collect(), nodos: Vec::with_capacity(n * 2), dinamicos: None };
         if n > 0 { bvh.construir(0, n); }
         bvh
+    }
+
+    // Actualiza TARS sin ordenar ni reconstruir los cientos de cubos de la nave.
+    pub fn actualizar_dinamicos(&mut self, cubos: Vec<Cubo>) {
+        self.dinamicos = if cubos.is_empty() { None } else { Some(Box::new(Bvh::new(cubos))) };
     }
 
     fn construir(&mut self, inicio: usize, fin: usize) -> usize {
@@ -85,8 +91,11 @@ impl Bvh {
 
     pub fn intersectar(&self, origen: &Vector3, direccion: &Vector3, limite: f32) -> Intersect {
         let mut hit = Intersect::empty();
+        if let Some(dinamicos) = &self.dinamicos {
+            hit = dinamicos.intersectar(origen, direccion, limite);
+        }
         if self.nodos.is_empty() { return hit; }
-        let mut mejor = limite;
+        let mut mejor = if hit.is_intersecting { hit.distance } else { limite };
         let mut indice = usize::MAX;
         self.visitar(0, origen, direccion, &componentes(origen), &componentes(direccion),
             &mut mejor, &mut indice, &mut hit);
@@ -97,7 +106,12 @@ impl Bvh {
     // omitir identifica el cubo emisor en el orden original de construcción.
     pub fn ocluido(&self, origen: &Vector3, direccion: &Vector3,
                   limite: f32, omitir: Option<usize>) -> bool {
-        if self.nodos.is_empty() || limite <= 0.0 { return false; }
+        if limite <= 0.0 { return false; }
+        // omitir es un índice de emisor ESTÁTICO; no se aplica al grupo móvil.
+        if self.dinamicos.as_ref().map_or(false, |d| d.ocluido(origen, direccion, limite, None)) {
+            return true;
+        }
+        if self.nodos.is_empty() { return false; }
         self.visibilidad(0,origen,direccion,&componentes(origen),&componentes(direccion),limite,omitir)
     }
     fn visibilidad(&self,id:usize,origen:&Vector3,direccion:&Vector3,
@@ -220,5 +234,36 @@ mod tests {
             assert_eq!(real.material, esperado.material);
             assert_eq!((real.u, real.v), (esperado.u, esperado.v));
         }
+    }
+}
+
+#[cfg(test)]
+mod tests_dinamicos {
+    use super::*;
+
+    fn caja(x: f32, z: f32) -> Cubo {
+        Cubo::new(Vector3::new(x, 0.0, z), Vector3::new(1.0, 1.0, 1.0),
+                  Color::WHITE, 0.5, 0.5)
+    }
+
+    #[test]
+    fn actualiza_impactos_y_sombras_sin_dejar_fantasmas() {
+        let mut bvh = Bvh::new(vec![caja(0.0, 5.0)]);
+        let o = Vector3::zero();
+        let d = Vector3::new(0.0, 0.0, 1.0);
+        bvh.actualizar_dinamicos(vec![caja(0.0, 2.0)]);
+        assert!((bvh.intersectar(&o, &d, 10.0).distance - 1.5).abs() < 0.0001);
+        // Omitir el emisor estático 0 no debe omitir el cubo dinámico 0.
+        assert!(bvh.ocluido(&o, &d, 3.0, Some(0)));
+        bvh.actualizar_dinamicos(vec![caja(3.0, 2.0)]);
+        assert!((bvh.intersectar(&o, &d, 10.0).distance - 4.5).abs() < 0.0001);
+        assert!(!bvh.ocluido(&o, &d, 3.0, None));
+        bvh.actualizar_dinamicos(vec![caja(0.0, 8.0)]);
+        assert!((bvh.intersectar(&o, &d, 10.0).distance - 4.5).abs() < 0.0001);
+        let mut solo_movil = Bvh::new(vec![]);
+        solo_movil.actualizar_dinamicos(vec![caja(0.0, 2.0)]);
+        assert!(solo_movil.intersectar(&o, &d, 10.0).is_intersecting);
+        solo_movil.actualizar_dinamicos(vec![]);
+        assert!(!solo_movil.intersectar(&o, &d, 10.0).is_intersecting);
     }
 }
