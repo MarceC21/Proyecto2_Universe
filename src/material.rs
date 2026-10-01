@@ -28,6 +28,16 @@ pub const METAL_OSCURO: usize = 1;
 pub const PANTALLA: usize = 2;
 pub const POLIMERO: usize = 3;
 pub const INDICADOR: usize = 4;
+// Materiales exclusivos de cabina; los cinco anteriores se conservan.
+pub const RADAR_CABINA: usize = 5;
+pub const BOTONERA_CABINA: usize = 6;
+pub const SISTEMAS_CABINA: usize = 7;
+pub const TAPIZADO_CABINA: usize = 8;
+pub const PARED_NAVE: usize = 9;
+pub const PISO_NAVE: usize = 10;
+pub const REFUERZO_NAVE: usize = 11;
+pub const MONITOR_COMANDO: usize = 12;
+pub const CONTROLES_COMANDO: usize = 13;
 
 #[allow(dead_code)]
 pub struct Material {
@@ -89,6 +99,68 @@ pub fn crear_materiales(pantalla_size: (usize, usize), consola_size: (usize, usi
             albedo: Color::new(255, 255, 255, 255),
             ka: 0.0, kd: 0.0, ks: 0.0, shininess: 1.0,
             reflectividad: 0.0, transparencia: 0.0, ior: 1.0, emision: 1.0,
+        },
+        Material {
+            nombre: "Radar de navegacion",
+            textura: textura::radar_cabina(),
+            albedo: Color::WHITE,
+            ka: 0.25, kd: 0.15, ks: 0.20, shininess: 80.0,
+            reflectividad: 0.02, transparencia: 0.0, ior: 1.0, emision: 0.85,
+        },
+        Material {
+            nombre: "Botonera de mando",
+            textura: textura::botonera_cabina(),
+            albedo: Color::WHITE,
+            ka: 0.35, kd: 0.50, ks: 0.25, shininess: 40.0,
+            reflectividad: 0.03, transparencia: 0.0, ior: 1.0, emision: 0.30,
+        },
+        Material {
+            nombre: "Telemetria de cabina",
+            textura: textura::sistemas_cabina(),
+            albedo: Color::WHITE,
+            ka: 0.25, kd: 0.15, ks: 0.20, shininess: 80.0,
+            reflectividad: 0.02, transparencia: 0.0, ior: 1.0, emision: 0.80,
+        },
+        Material {
+            nombre: "Tapizado acolchado de cabina",
+            textura: textura::tapizado_cabina(),
+            albedo: Color::WHITE,
+            ka: 0.42, kd: 0.75, ks: 0.08, shininess: 12.0,
+            reflectividad: 0.0, transparencia: 0.0, ior: 1.0, emision: 0.0,
+        },
+        // Superficies extensas: brillo local suave, sin rayos de reflexión.
+        Material {
+            nombre: "Panel gris de pared",
+            textura: textura::pared_nave(),
+            albedo: Color::WHITE,
+            ka: 0.44, kd: 0.52, ks: 0.08, shininess: 24.0,
+            reflectividad: 0.0, transparencia: 0.0, ior: 1.0, emision: 0.0,
+        },
+        Material {
+            nombre: "Piso gris antideslizante",
+            textura: textura::piso_nave(),
+            albedo: Color::WHITE,
+            ka: 0.40, kd: 0.58, ks: 0.04, shininess: 12.0,
+            reflectividad: 0.0, transparencia: 0.0, ior: 1.0, emision: 0.0,
+        },
+        Material {
+            nombre: "Refuerzos y conductos grises",
+            textura: textura::solida(Color::new(105, 108, 112, 255)),
+            albedo: Color::WHITE,
+            ka: 0.44, kd: 0.55, ks: 0.12, shininess: 24.0,
+            reflectividad: 0.0, transparencia: 0.0, ior: 1.0, emision: 0.0,
+        },
+        Material {
+            nombre: "Monitor de comando derecho",
+            textura: textura::monitor_comando(), albedo: Color::WHITE,
+            ka: 0.25, kd: 0.15, ks: 0.12, shininess: 40.0,
+            reflectividad: 0.0, transparencia: 0.0, ior: 1.0, emision: 0.75,
+        },
+        Material {
+            nombre: "Instrumentos de pared",
+            textura: textura::controles_comando(), albedo: Color::WHITE,
+            ka: 0.40, kd: 0.50, ks: 0.08, shininess: 20.0,
+            reflectividad: 0.0, transparencia: 0.0, ior: 1.0, emision: 0.12,
         },
     ]
 }

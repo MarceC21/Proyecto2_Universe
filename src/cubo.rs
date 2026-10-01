@@ -28,7 +28,8 @@ pub struct Cubo {
     pub max: Vector3,
     center: Vector3,
     half_size: Vector3,
-    rotation_y: f32,
+    cos_y: f32,
+    sin_y: f32,
 
     pub albedo: Color,
     pub ka: f32,
@@ -45,7 +46,8 @@ impl Cubo {
             max: center + half,
             center,
             half_size: half,
-            rotation_y: 0.0,
+            cos_y: 1.0,
+            sin_y: 0.0,
             albedo,
             ka,
             kd,
@@ -57,9 +59,11 @@ impl Cubo {
     // La caja conserva dimensiones locales; min/max se actualizan como
     // límites globales para que también describan el volumen rotado.
     pub fn rotado_y(mut self, angle: f32) -> Self {
-        self.rotation_y = angle;
-        let c = angle.cos().abs();
-        let s = angle.sin().abs();
+        let (sin_y, cos_y) = angle.sin_cos();
+        self.cos_y = cos_y;
+        self.sin_y = sin_y;
+        let c = cos_y.abs();
+        let s = sin_y.abs();
         let extent_x = c * self.half_size.x + s * self.half_size.z;
         let extent_z = s * self.half_size.x + c * self.half_size.z;
         let extent = Vector3::new(extent_x, self.half_size.y, extent_z);
@@ -78,20 +82,18 @@ impl Cubo {
 
 impl RayIntersect for Cubo {
     fn ray_intersect(&self, ray_origin: &Vector3, ray_direction: &Vector3) -> Intersect {
-        let (c, s) = (self.rotation_y.cos(), self.rotation_y.sin());
+        let (c, s) = (self.cos_y, self.sin_y);
 
         // Rotación inversa: rayo de mundo a espacio local de la caja.
         let offset = *ray_origin - self.center;
-        let origin = Vector3::new(
-            c * offset.x - s * offset.z,
-            offset.y,
-            s * offset.x + c * offset.z,
-        );
-        let direction = Vector3::new(
-            c * ray_direction.x - s * ray_direction.z,
-            ray_direction.y,
-            s * ray_direction.x + c * ray_direction.z,
-        );
+        // La mayoría de las cajas no están giradas: evita las dos rotaciones.
+        let (origin, direction) = if s == 0.0 && c == 1.0 {
+            (offset, *ray_direction)
+        } else {
+            (Vector3::new(c * offset.x - s * offset.z, offset.y, s * offset.x + c * offset.z),
+             Vector3::new(c * ray_direction.x - s * ray_direction.z, ray_direction.y,
+                 s * ray_direction.x + c * ray_direction.z))
+        };
 
         let o = [origin.x, origin.y, origin.z];
         let d = [direction.x, direction.y, direction.z];

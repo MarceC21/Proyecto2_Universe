@@ -1,4 +1,6 @@
 use raylib::prelude::*;
+use std::sync::{Mutex, OnceLock};
+use std::time::Instant;
 
 mod framebuffer;
 mod ray_intersect;
@@ -8,10 +10,13 @@ mod planeta;
 mod camara;
 mod skybox;
 mod cubo;
+mod bvh;
 mod material;
 mod textura;
 mod mesa;
 mod escena;
+mod colisiones;
+mod cabina;
 
 use framebuffer::Framebuffer;
 use ray_intersect::{Intersect, RayIntersect};
@@ -20,12 +25,12 @@ use luz::Luz;
 use planeta::{Planet, OrbitalParameters};
 use camara::{Camera, CamaraPersona};
 use skybox::sky_color;
-use cubo::Cubo;
+use bvh::Bvh;
 use material::{Material, crear_materiales};
 use mesa::{pantalla_texture_size, consola_texture_size};
 use escena::{
     crear_habitacion, obstaculos, planetario_origen, EYE_HEIGHT, PLAYER_RADIUS, PLAYER_START_X,
-    PLAYER_START_Z, ROOM_HALF_X, ROOM_HALF_Z,
+    PLAYER_START_Z, contorno_nave, WALL_THICKNESS,
 };
 
 // ---------------------------------------------------------------------
@@ -39,7 +44,7 @@ fn cast_ray(
     ray_origin: &Vector3,
     ray_direction: &Vector3,
     planets: &[Planet],
-    cubos: &[Cubo],
+    cubos: &Bvh,
     materials: &[Material],
     light: &Luz,
     sun_center: Vector3,
@@ -61,23 +66,17 @@ fn cast_ray(
 
     }
 
-    // Los bloques (habitación, mesa) compiten por el impacto más
-    // cercano con las esferas: se usa el mismo criterio de distancia.
-    for cubo in cubos {
-
-        let intersect = cubo.ray_intersect(ray_origin, ray_direction);
-
-        if intersect.is_intersecting && intersect.distance < closest_distance {
-            closest_distance = intersect.distance;
-            closest_intersect = intersect;
-        }
-
+    // La BVH descarta grupos enteros y visita primero los más cercanos.
+    let intersect = cubos.intersectar(ray_origin, ray_direction, closest_distance);
+    if intersect.is_intersecting && intersect.distance < closest_distance {
+        closest_distance = intersect.distance;
+        closest_intersect = intersect;
     }
 
     // Los anillos ya no solo aparecen cuando el rayo no choca con nada:
     // ahora hay paredes y una mesa, así que el anillo solo se dibuja si
     // está MÁS CERCA que el impacto más cercano (resuelve su profundidad).
-    if let Some((ring_t, ring_color)) = orbit_ring_hit(ray_origin, ray_direction, sun_center, orbit_radii) {
+    if let Some((ring_t, ring_color)) = orbit_ring_hit(ray_origin, ray_direction, sun_center, orbit_radii, closest_distance) {
         if ring_t < closest_distance {
             return ring_color;
         }
@@ -94,7 +93,7 @@ fn cast_ray(
 }
 
 // Profundidad máxima de rayos reflejados: cada rebote es un cast_ray()
-// completo (recorre toda la escena de nuevo), así que se mantiene bajo
+// completo (consulta la BVH y los planetas), así que se mantiene bajo
 // para no disparar el costo. 2 alcanza para que el marco metálico y el
 // tablero se reflejen entre sí sin verse "cortada" la reflexión.
 const MAX_REFLECTION_DEPTH: u32 = 2;
@@ -124,7 +123,7 @@ fn shade(
     materials: &[Material],
     light: &Luz,
     planets: &[Planet],
-    cubos: &[Cubo],
+    cubos: &Bvh,
     sun_center: Vector3,
     orbit_radii: &[f32],
     depth: u32,
@@ -236,6 +235,7 @@ fn orbit_ring_hit(
     ray_direction: &Vector3,
     sun_center: Vector3,
     orbit_radii: &[f32],
+    limite: f32,
 ) -> Option<(f32, Color)> {
 
     // Rayo casi paralelo al plano orbital: no vale la pena intersectar
@@ -248,7 +248,7 @@ fn orbit_ring_hit(
     let t = (sun_center.y - ray_origin.y) / ray_direction.y;
 
     // El plano queda detrás de la cámara: no se ve.
-    if t <= 0.0001 {
+    if t <= 0.0001 || t >= limite {
         return None;
     }
 
@@ -276,13 +276,12 @@ fn orbit_ring_hit(
 /// Dos mejoras de velocidad respecto a la versión anterior:
 ///   - La base de la cámara (forward/right/up) se calcula UNA vez por
 ///     frame y se recibe ya hecha, en vez de recalcularla por pixel.
-///   - Las filas se reparten entre hilos (std::thread::scope, sin
-///     dependencias nuevas). Cada pixel es independiente de los demás,
-///     así que el trabajo se paraleliza sin coordinación.
+///   - Los hilos toman grupos pequeños de filas de una cola compartida,
+///     evitando esperar a un único bloque con muchos reflejos.
 pub fn render(
     framebuffer: &mut Framebuffer,
     planets: &[Planet],
-    cubos: &[Cubo],
+    cubos: &Bvh,
     materials: &[Material],
     eye: Vector3,
     basis: (Vector3, Vector3, Vector3),
@@ -298,40 +297,35 @@ pub fn render(
     let aspect_ratio = width / height;
     let (forward, right, up) = basis;
 
-    let threads = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4);
-    let rows_per_chunk = h.div_ceil(threads).max(1);
-
-    let mut pixels = vec![Color::BLACK; w * h];
-
+    static HILOS: OnceLock<usize> = OnceLock::new();
+    let threads = *HILOS.get_or_init(|| std::thread::available_parallelism()
+        .map(|n| n.get()).unwrap_or(1));
+    const FILAS_POR_TRABAJO: usize = 4;
+    // Cada tarea obtiene una porción mutable exclusiva del buffer. El candado
+    // solo protege la entrega de tareas, nunca el trazado ni la escritura.
+    // No hay copias al framebuffer, asignaciones por píxel ni unsafe.
+    let trabajos = Mutex::new(framebuffer.pixels_mut()
+        .chunks_mut(w * 4 * FILAS_POR_TRABAJO).enumerate());
     std::thread::scope(|scope| {
-        for (chunk_index, chunk) in pixels.chunks_mut(rows_per_chunk * w).enumerate() {
-            let first_row = chunk_index * rows_per_chunk;
-
-            scope.spawn(move || {
-                for (i, pixel) in chunk.iter_mut().enumerate() {
+        for _ in 0..threads.min(h.div_ceil(FILAS_POR_TRABAJO)) {
+            scope.spawn(|| loop {
+                let siguiente = { trabajos.lock().expect("Cola de render bloqueada").next() };
+                let Some((indice, bytes)) = siguiente else { break; };
+                let fila_inicial = indice * FILAS_POR_TRABAJO;
+                for (i, pixel) in bytes.chunks_exact_mut(4).enumerate() {
                     let x = i % w;
-                    let y = first_row + i / w;
-
-                    // Pixel -> espacio de pantalla [-1, 1], ajustado por aspect ratio
-                    let screen_x = ((2.0 * x as f32) / width - 1.0) * aspect_ratio;
-                    let screen_y = -(2.0 * y as f32) / height + 1.0;
-
-                    // Dirección en espacio de cámara (adelante = -Z) rotada al
-                    // mundo con la base de la cámara.
-                    let ray_direction =
-                        (right * screen_x + up * screen_y + forward).normalize();
-
-                    *pixel = cast_ray(&eye, &ray_direction, planets, cubos, materials, light, sun_center, orbit_radii, 0);
+                    let y = fila_inicial + i / w;
+                    // Muestreo en el centro del píxel.
+                    let screen_x = (2.0 * (x as f32 + 0.5) / width - 1.0) * aspect_ratio;
+                    let screen_y = 1.0 - 2.0 * (y as f32 + 0.5) / height;
+                    let direction = (right * screen_x + up * screen_y + forward).normalize();
+                    let color = cast_ray(&eye, &direction, planets, cubos, materials,
+                        light, sun_center, orbit_radii, 0);
+                    pixel.copy_from_slice(&[color.r, color.g, color.b, 255]);
                 }
             });
         }
     });
-
-    for y in 0..h {
-        for x in 0..w {
-            framebuffer.set_pixel_color(x as i32, y as i32, pixels[y * w + x]);
-        }
-    }
 }
 
 // ---------------------------------------------------------------------
@@ -486,10 +480,11 @@ fn crear_sistema_solar() -> Vec<Planet> {
     vec![sun, mercury, venus, earth, mars]
 }
 
-// Ventana de 800x600. El framebuffer se traza a menor resolución
-// (ventana / RENDER_DIVISOR) y se escala: con 2 se trazan 4 veces menos
-// rayos. Poner 1 para resolución completa si el equipo lo aguanta.
-const RENDER_DIVISOR: i32 = 2;
+// F1: nativa; F2: 75%; F3: 50%. F4 activa resolución dinámica opcional.
+// Se inicia en nativa para recuperar los detalles pequeños.
+fn tamano_render(calidad: usize) -> (i32, i32) {
+    match calidad { 1 => (900, 700), 2 => (675, 525), _ => (450, 350) }
+}
 
 enum Modo {
     Persona, // primera persona: caminar y mirar
@@ -501,15 +496,14 @@ fn main() {
     let window_width = 900;
     let window_height = 700;
 
-    let mut framebuffer = Framebuffer::new(
-        window_width / RENDER_DIVISOR,
-        window_height / RENDER_DIVISOR,
-    );
-
     let (mut window, raylib_thread) = raylib::init()
         .size(window_width, window_height)
         .title("Diorama - Interior de la nave")
         .build();
+
+    // Se declara después de la ventana: libera la textura antes de cerrar OpenGL.
+    let (rw, rh) = tamano_render(1);
+    let mut framebuffer = Framebuffer::new(rw, rh);
 
     // El cursor queda capturado para mirar con el ratón (TAB lo libera).
     window.disable_cursor();
@@ -523,8 +517,12 @@ fn main() {
     // recalculan cada frame como origen + offset (nada se acumula).
     let sun_center = planetario_origen();
 
-    let cubos = crear_habitacion();
+    let geometria = crear_habitacion();
+    let cantidad_cubos = geometria.len();
+    let cubos = Bvh::new(geometria);
     let obstaculos = obstaculos();
+    let colisiones = colisiones::Colisiones::new(&contorno_nave(), WALL_THICKNESS)
+        .con_cajas(cabina::obstaculos_cabina(&contorno_nave(), WALL_THICKNESS));
 
     // Catálogo de materiales de la mesa (metal claro/oscuro, pantalla,
     // polímero, indicador cian): genera sus texturas una sola vez, al
@@ -565,6 +563,20 @@ fn main() {
         25.0_f32.to_radians(),
     );
 
+    let mut calidad = 1usize;
+    let mut dinamica = false;
+    let mut mostrar_datos = true;
+    let mut ojo_anterior: Option<Vector3> = None;
+    let mut direccion_anterior: Option<Vector3> = None;
+    let mut ultimo_movimiento = Instant::now();
+    let mut reloj_estadisticas = Instant::now();
+    let mut suma_render = 0.0f64;
+    let mut suma_presentacion = 0.0f64;
+    let mut cuadros = 0u32;
+    let mut hud = format!("BVH: {} cubos | midiendo...\nF1 nativa  F2 75%  F3 50%  F4 dinamica  F5 datos", cantidad_cubos);
+    if cfg!(debug_assertions) {
+        eprintln!("AVISO: compilacion debug. Para medir rendimiento: cargo run --release");
+    }
     let mut modo = Modo::Persona;
     let mut mouse_capturado = true;
 
@@ -578,7 +590,13 @@ fn main() {
     // Main Loop
     while !window.window_should_close() {
 
-        let delta_time = window.get_frame_time().min(0.1);
+        let delta_time = window.get_frame_time().min(0.25);
+
+        if window.is_key_pressed(KeyboardKey::KEY_F1) { calidad = 1; }
+        if window.is_key_pressed(KeyboardKey::KEY_F2) { calidad = 2; }
+        if window.is_key_pressed(KeyboardKey::KEY_F3) { calidad = 3; }
+        if window.is_key_pressed(KeyboardKey::KEY_F4) { dinamica = !dinamica; }
+        if window.is_key_pressed(KeyboardKey::KEY_F5) { mostrar_datos = !mostrar_datos; }
 
         // C: cambiar entre primera persona y vista de diorama.
         if window.is_key_pressed(KeyboardKey::KEY_C) {
@@ -612,8 +630,7 @@ fn main() {
                     &window,
                     delta_time,
                     mouse_capturado,
-                    ROOM_HALF_X,
-                    ROOM_HALF_Z,
+                    &colisiones,
                     PLAYER_RADIUS,
                     &obstaculos,
                 );
@@ -630,8 +647,39 @@ fn main() {
             planet.update(delta_time, sun_center);
         }
 
-        render(&mut framebuffer, &planets, &cubos, &materials, eye, basis, &light, sun_center, &orbit_radii);
+        // La reducción automática es opcional. Solo considera la cámara;
+        // los planetas siguen animados y no impiden recuperar el detalle.
+        let cambio = |a: Vector3, b: Vector3| { let d = a - b; d.dot(d) };
+        let se_mueve = ojo_anterior.map_or(true, |v| cambio(v, eye) > 0.000001)
+            || direccion_anterior.map_or(true, |v| cambio(v, basis.0) > 0.000001);
+        if se_mueve { ultimo_movimiento = Instant::now(); }
+        ojo_anterior = Some(eye);
+        direccion_anterior = Some(basis.0);
+        let calidad_efectiva = if dinamica && ultimo_movimiento.elapsed().as_secs_f32() < 0.6 {
+            3
+        } else { calidad };
+        let (rw, rh) = tamano_render(calidad_efectiva);
+        framebuffer.resize(rw, rh);
 
-        framebuffer.swap_buffers(&mut window, &raylib_thread);
+        let inicio_render = Instant::now();
+        render(&mut framebuffer, &planets, &cubos, &materials, eye, basis, &light, sun_center, &orbit_radii);
+        suma_render += inicio_render.elapsed().as_secs_f64();
+        let inicio_presentacion = Instant::now();
+        framebuffer.swap_buffers(&mut window, &raylib_thread, if mostrar_datos { &hud } else { "" });
+        suma_presentacion += inicio_presentacion.elapsed().as_secs_f64();
+        cuadros += 1;
+        let transcurrido = reloj_estadisticas.elapsed().as_secs_f64();
+        if transcurrido >= 0.75 {
+            hud = format!("{:.1} FPS | traza {:.1} ms | presenta {:.1} ms | {}x{} | {} cubos | {}\nF1 nativa  F2 75%  F3 50%  F4 auto:{}  F5 ocultar",
+                cuadros as f64 / transcurrido,
+                suma_render * 1000.0 / cuadros as f64,
+                suma_presentacion * 1000.0 / cuadros as f64, rw, rh, cantidad_cubos,
+                if cfg!(debug_assertions) { "DEBUG" } else { "RELEASE" },
+                if dinamica { "si" } else { "no" });
+            suma_render = 0.0;
+            suma_presentacion = 0.0;
+            cuadros = 0;
+            reloj_estadisticas = Instant::now();
+        }
     }
 }

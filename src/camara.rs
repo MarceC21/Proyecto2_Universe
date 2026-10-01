@@ -22,7 +22,7 @@
 // queda con una desaceleración suave en vez de parar en seco.
 use raylib::prelude::*;
 
-use crate::escena::Obstaculo;
+use crate::colisiones::{Colisiones, Obstaculo};
 
 const ORBIT_SPEED: f32 = 1.2; // radianes/segundo
 const ZOOM_KEY_SPEED: f32 = 10.0; // unidades/segundo (teclas Q/E)
@@ -226,25 +226,12 @@ impl CamaraPersona {
         (forward, right, up)
     }
 
-    // ¿Está (x, z) dentro de una pared o de un obstáculo? Se trata al
-    // jugador como un círculo de radio `radius`, aproximado con un
-    // cuadrado (basta para cajas alineadas con los ejes).
-    fn is_blocked(x: f32, z: f32, half_x: f32, half_z: f32, radius: f32, obstacles: &[Obstaculo]) -> bool {
-        if x.abs() > half_x - radius || z.abs() > half_z - radius {
-            return true;
-        }
-        obstacles.iter().any(|o| {
-            x > o.min_x - radius && x < o.max_x + radius && z > o.min_z - radius && z < o.max_z + radius
-        })
-    }
-
     pub fn update(
         &mut self,
         window: &RaylibHandle,
         delta_time: f32,
         mouse_look: bool,
-        half_x: f32,
-        half_z: f32,
+        colisiones: &Colisiones,
         radius: f32,
         obstacles: &[Obstaculo],
     ) {
@@ -302,20 +289,20 @@ impl CamaraPersona {
         self.velocity_x += (wish_x * WALK_SPEED - self.velocity_x) * t;
         self.velocity_z += (wish_z * WALK_SPEED - self.velocity_z) * t;
 
-        // Se mueve cada eje por separado: si un eje choca, el otro sigue
-        // libre y el jugador "resbala" a lo largo de la pared o la mesa.
-        let new_x = self.eye.x + self.velocity_x * delta_time;
-        if Self::is_blocked(new_x, self.eye.z, half_x, half_z, radius, obstacles) {
+        // La cámara solicita el desplazamiento; colisiones resuelve el recorrido.
+        let dx = self.velocity_x * delta_time;
+        let dz = self.velocity_z * delta_time;
+        let (x, z) = colisiones.mover(
+            self.eye.x, self.eye.z, dx, dz, radius, obstacles,
+        );
+        if (x - (self.eye.x + dx)).abs() > 0.00001 {
             self.velocity_x = 0.0;
-        } else {
-            self.eye.x = new_x;
         }
-        let new_z = self.eye.z + self.velocity_z * delta_time;
-        if Self::is_blocked(self.eye.x, new_z, half_x, half_z, radius, obstacles) {
+        if (z - (self.eye.z + dz)).abs() > 0.00001 {
             self.velocity_z = 0.0;
-        } else {
-            self.eye.z = new_z;
         }
+        self.eye.x = x;
+        self.eye.z = z;
 
         self.eye.y = self.eye_height;
     }
