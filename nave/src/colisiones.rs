@@ -174,6 +174,11 @@ impl Colisiones {
         obstaculos: &[Obstaculo], puerta_abierta: bool, puerta_lateral_abierta: bool,
         afuera: bool, en_espacio: bool,
     ) -> bool {
+        // Las puertas solo cambian los limites del recinto. Las cajas de
+        // cabina, sillones y laboratorio siguen siendo solidas en ambos modos.
+        if self.cajas.iter().any(|caja| caja.bloqueado(x, z, radio)) {
+            return true;
+        }
         if afuera {
             let cruce_retorno = puerta_abierta && anterior_z > 7.5 && z <= 7.5
                 && x.abs() < 1.90 - radio;
@@ -215,6 +220,44 @@ impl Colisiones {
 mod tests {
     use super::*;
     use raylib::prelude::Vector3;
+
+    #[test]
+    fn movimiento_con_puertas_respeta_cajas_de_muebles() {
+        let contorno = crate::escena::contorno_nave();
+        let cajas = crate::cabina::obstaculos_cabina(&contorno, crate::escena::WALL_THICKNESS)
+            .into_iter().chain(crate::laboratorio::obstaculos());
+        let colisiones = Colisiones::new(&contorno, crate::escena::WALL_THICKNESS)
+            .con_cajas(cajas.collect());
+        // Cada centro estaba protegido en el camino original y debe estarlo
+        // tambien en el camino nuevo, con puertas abiertas o cerradas.
+        for caja in &colisiones.cajas {
+            for abierta in [false, true] {
+                assert!(colisiones.bloqueado_compuerta(
+                    caja.centro_x, caja.centro_z, caja.centro_x, caja.centro_z,
+                    crate::escena::PLAYER_RADIUS, &[], abierta, abierta, false, false));
+            }
+        }
+    }
+
+    #[test]
+    fn restaura_muebles_sin_cerrar_el_paso_trasero() {
+        let contorno = crate::escena::contorno_nave();
+        let colisiones = Colisiones::new(&contorno, crate::escena::WALL_THICKNESS)
+            .con_cajas(crate::cabina::obstaculos_cabina(&contorno, crate::escena::WALL_THICKNESS))
+            .con_cajas(crate::laboratorio::obstaculos());
+        let mut puerta = crate::compuerta::Compuerta::new();
+        puerta.actualizar(1.3, Some(Vector3::new(0.0, 1.65, crate::escena::ROOM_BACK_Z)));
+        assert!(puerta.abierta());
+        let mut obstaculos = crate::escena::obstaculos();
+        obstaculos.extend(puerta.obstaculos());
+        let (mut afuera, mut espacio) = (false, false);
+        let (x, z) = colisiones.mover_con_compuerta(0.0, 6.0, 0.0, 4.0,
+            crate::escena::PLAYER_RADIUS, &obstaculos, true, false, &mut afuera, &mut espacio);
+        assert!(afuera && z > 9.5);
+        let (_, z) = colisiones.mover_con_compuerta(x, z, 0.0, -4.0,
+            crate::escena::PLAYER_RADIUS, &obstaculos, true, false, &mut afuera, &mut espacio);
+        assert!(!afuera && z < 6.5);
+    }
 
     #[test]
     fn cruza_y_regresa_por_compuerta_lateral_abierta() {

@@ -4,7 +4,8 @@ use std::sync::OnceLock;
 use raylib::prelude::*;
 use crate::colisiones::CajaOrientada;
 use crate::cubo::Cubo;
-use crate::material::{CONTROLES_COMANDO, INDICADOR, PARED_NAVE, REFUERZO_NAVE, LUZ_LABORATORIO, BOTON_ROJO};
+use crate::material::{CONTROLES_COMANDO, INDICADOR, PARED_NAVE, REFUERZO_NAVE, LUZ_LABORATORIO, BOTON_ROJO, VIDRIO_LABORATORIO};
+use crate::ray_intersect::{Intersect, RayIntersect};
 
 const CENTRO_U: f32 = 4.60;
 const ANCHO: f32 = 5.40;
@@ -12,6 +13,7 @@ const FONDO_VISOR: f32 = 1.72;
 const VISOR_ABAJO: f32 = 1.36;
 const VISOR_ARRIBA: f32 = 3.36;
 const SEMIANCHO_VISOR: f32 = 2.55;
+const ESPESOR_VISOR: f32 = 0.16;
 
 // Tangente e interior de la diagonal IZQUIERDA junto a la mesa central.
 // Se calcula al construir el módulo, nunca se recalcula la raíz por píxel.
@@ -57,8 +59,8 @@ pub fn construir(cubos: &mut Vec<Cubo>) {
         bloque(cubos,u,2.28,0.86,0.16,2.16,1.66,REFUERZO_NAVE);
         bloque(cubos,u,2.35,1.73,0.06,1.80,0.04,INDICADOR);
     }
-    // Carriles y travesaños del visor. El cristal NO es un cubo opaco:
-    // filtrar_visor() lo compone después del trazado usando su profundidad.
+    // Carriles y travesanos del visor. El bloque de vidrio se intersecta
+    // aparte de la BVH opaca, para transmitir luz y refractar los rayos.
     bloque(cubos,0.0,1.30,FONDO_VISOR,5.24,0.12,0.10,REFUERZO_NAVE);
     bloque(cubos,0.0,3.39,FONDO_VISOR,5.24,0.06,0.10,REFUERZO_NAVE);
     bloque(cubos,0.0,1.40,FONDO_VISOR+0.05,0.65,0.07,0.10,REFUERZO_NAVE);
@@ -97,23 +99,72 @@ pub fn obstaculos() -> Vec<CajaOrientada> {
 #[allow(dead_code)]
 pub fn posicion_boton() -> Vector3 { punto(2.30,1.99,1.87) }
 
-// Vidrio plano de transparencia sencilla, sin refracción ni rayos adicionales.
-// limite es la distancia al objeto opaco/anillo ya trazado: así no se pinta
-// vidrio delante de una columna, una mesa o un objeto más cercano.
-// Al animarlo después, desplazar también estos límites junto al marco móvil.
-pub fn filtrar_visor(color: Color, origen: &Vector3, direccion: &Vector3, limite: f32) -> Color {
+// Volumen cerrado: frente, dorso y cantos del vidrio. La cara frontal
+// conserva la posicion anterior; el grosor crece hacia el laboratorio.
+fn vidrio() -> &'static Cubo {
+    static VIDRIO: OnceLock<Cubo> = OnceLock::new();
+    VIDRIO.get_or_init(|| {
+        Cubo::new(
+            punto(0.0, (VISOR_ABAJO + VISOR_ARRIBA) * 0.5,
+                FONDO_VISOR - ESPESOR_VISOR * 0.5),
+            Vector3::new(SEMIANCHO_VISOR * 2.0, VISOR_ARRIBA - VISOR_ABAJO,
+                ESPESOR_VISOR), Color::WHITE, 0.0, 0.0,
+        ).rotado_y(marco().angulo).con_material(VIDRIO_LABORATORIO, None)
+    })
+}
+
+// Cubo orienta sus normales contra el rayo para sombrear solidos opacos.
+// Para Snell necesitamos la normal EXTERIOR, incluso al salir del vidrio.
+pub fn intersectar_visor(origen: &Vector3, direccion: &Vector3) -> Intersect {
+    let mut impacto = vidrio().ray_intersect(origen, direccion);
+    if !impacto.is_intersecting { return impacto; }
     let m = marco();
-    let denominador = direccion.x*m.nx + direccion.z*m.nz;
-    if denominador.abs() < 0.000001 { return color; }
     let ox = origen.x-m.x;
     let oz = origen.z-m.z;
-    let t = (FONDO_VISOR - ox*m.nx - oz*m.nz) / denominador;
-    if t <= 0.001 || t >= limite { return color; }
-    let u = (ox + direccion.x*t)*m.tx + (oz + direccion.z*t)*m.tz;
-    let y = origen.y + direccion.y*t;
-    if u.abs() > SEMIANCHO_VISOR || !(VISOR_ABAJO..=VISOR_ARRIBA).contains(&y) { return color; }
-    let borde = SEMIANCHO_VISOR-u.abs() < 0.035 || y-VISOR_ABAJO < 0.025 || VISOR_ARRIBA-y < 0.025;
-    let alpha = if borde { 0.30 } else { 0.065 };
-    let mezclar = |a: u8, b: u8| (a as f32*(1.0-alpha)+b as f32*alpha) as u8;
-    Color::new(mezclar(color.r,102),mezclar(color.g,199),mezclar(color.b,214),255)
+    let u = ox*m.tx + oz*m.tz;
+    let fondo = ox*m.nx + oz*m.nz;
+    let dentro = u.abs() <= SEMIANCHO_VISOR
+        && (VISOR_ABAJO..=VISOR_ARRIBA).contains(&origen.y)
+        && (FONDO_VISOR - ESPESOR_VISOR..=FONDO_VISOR).contains(&fondo);
+    if dentro { impacto.normal = impacto.normal * -1.0; }
+    impacto
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn vidrio_desvia_dentro_y_sale_paralelo_con_desplazamiento() {
+        let m = marco();
+        let n = Vector3::new(m.nx, 0.0, m.nz);
+        let tangente = Vector3::new(m.tx, 0.0, m.tz);
+        let direccion = (n * -1.0 + tangente * 0.60).normalize();
+        let entrada = intersectar_visor(&punto(-0.5, 2.3, 2.7), &direccion);
+        assert!(entrada.is_intersecting);
+        assert!(direccion.dot(entrada.normal) < -0.5);
+        let interior = crate::refractar(direccion, entrada.normal, 1.0 / 1.52).unwrap();
+        assert!(interior.dot(tangente).abs() < direccion.dot(tangente).abs());
+        let salida = intersectar_visor(
+            &(entrada.point - entrada.normal * crate::REFLECTION_BIAS), &interior);
+        assert!(salida.is_intersecting);
+        assert!(interior.dot(salida.normal) > 0.0);
+        let exterior = crate::refractar(interior, salida.normal * -1.0, 1.52).unwrap();
+        assert!(exterior.dot(direccion) > 0.99999);
+        let distancia_recta = ESPESOR_VISOR / (-direccion.dot(n));
+        let sin_vidrio = entrada.point + direccion * distancia_recta;
+        assert!((salida.point - sin_vidrio).dot(tangente).abs() > 0.02);
+        assert!(!intersectar_visor(
+            &(salida.point + salida.normal * crate::REFLECTION_BIAS), &exterior
+        ).is_intersecting);
+    }
+
+    #[test]
+    fn fuera_del_marco_no_hay_vidrio() {
+        let m = marco();
+        let direccion = Vector3::new(-m.nx, 0.0, -m.nz);
+        for (u, y) in [(SEMIANCHO_VISOR + 0.1, 2.3), (0.0, VISOR_ARRIBA + 0.1)] {
+            assert!(!intersectar_visor(&punto(u, y, 2.7), &direccion).is_intersecting);
+        }
+    }
 }

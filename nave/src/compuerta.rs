@@ -2,7 +2,7 @@ use raylib::prelude::*;
 use crate::colisiones::Obstaculo;
 use crate::cubo::Cubo;
 use crate::escena::{control_esclusa, ROOM_BACK_Z};
-use crate::material::{HOJA_COMPUERTA, REFUERZO_NAVE};
+use crate::material::HOJA_COMPUERTA;
 
 const ANCHO_HOJA: f32 = 1.895;
 const ALTO_HOJA: f32 = 4.50;
@@ -73,10 +73,5 @@ impl Compuerta {
                 Color::WHITE, 0.0, 0.0,
             ).con_material(HOJA_COMPUERTA, None));
         }
-        cubos.push(Cubo::new(
-            Vector3::new(0.0, ALTO_HOJA * 0.5, ROOM_BACK_Z + 0.095),
-            Vector3::new(0.045, ALTO_HOJA, 0.05),
-            Color::WHITE, 0.0, 0.0,
-        ).con_material(REFUERZO_NAVE, None));
     }
 }

@@ -12,9 +12,8 @@
 // reflejada R = D - 2(D.N)N (esto es reflexión trazada, distinta del
 // brillo especular, que solo es un punto de luz).
 //
-// `transparencia` e `ior` ya forman parte del material pero todavía no
-// se usan: se activarán con el vidrio (refracción), que está fuera de
-// esta etapa.
+// El visor del laboratorio usa transparencia e ior para trazar rayos
+// refractados en sus dos superficies, ademas de la reflexion de Fresnel.
 //
 // Las texturas se generan una sola vez, aquí, al arrancar.
 
@@ -46,6 +45,7 @@ pub const TARS_CASCO: usize = 18;
 pub const TARS_NEGRO: usize = 19;
 pub const TARS_NOMBRE: usize = 20;
 pub const TARS_BRAILLE: usize = 21;
+pub const VIDRIO_LABORATORIO: usize = 22;
 
 #[allow(dead_code)]
 pub struct Material {
@@ -57,8 +57,8 @@ pub struct Material {
     pub ks: f32,             // coeficiente especular
     pub shininess: f32,      // exponente especular (más alto = brillo más pequeño)
     pub reflectividad: f32,  // 0..1: peso del rayo reflejado
-    pub transparencia: f32,  // 0..1 (sin uso todavía)
-    pub ior: f32,            // índice de refracción (sin uso todavía)
+    pub transparencia: f32,  // 0..1: transmision del visor refractivo
+    pub ior: f32,            // indice de refraccion (aire = 1.0)
     pub emision: f32,        // 0..1+: cuánto color propio se suma sin depender de la luz
 }
 
@@ -214,5 +214,27 @@ pub fn crear_materiales(pantalla_size: (usize, usize), consola_size: (usize, usi
             ka: 0.48, kd: 0.65, ks: 0.30, shininess: 48.0,
             reflectividad: 0.0, transparencia: 0.0, ior: 1.0, emision: 0.0,
         },
+        Material {
+            nombre: "Vidrio de seguridad del laboratorio",
+            textura: textura_vidrio_laboratorio(),
+            albedo: Color::new(250, 254, 255, 255),
+            ka: 0.12, kd: 0.08, ks: 0.55, shininess: 120.0,
+            reflectividad: 0.043, transparencia: 0.98, ior: 1.52, emision: 0.0,
+        },
     ]
+}
+
+// Textura propia, casi transparente: borde pulido ligeramente cian.
+// Se genera una sola vez y se consulta con las UV del bloque de vidrio.
+fn textura_vidrio_laboratorio() -> Textura {
+    let mut textura = Textura::new(128, 128, Color::WHITE);
+    for y in 0i32..128 {
+        for x in 0i32..128 {
+            let borde = x.min(127 - x).min(y.min(127 - y));
+            if borde < 2 {
+                textura.set(x, y, Color::new(222, 246, 251, 255));
+            }
+        }
+    }
+    textura
 }

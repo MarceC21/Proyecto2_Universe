@@ -42,6 +42,16 @@ use escena::{
 // Trazado de rayos y sombreado
 // ---------------------------------------------------------------------
 
+// Presupuestos separados: atravesar las dos caras del vidrio no consume
+// los dos rebotes disponibles para los metales. Ambas ramas son acotadas.
+#[derive(Clone, Copy, Default)]
+struct Profundidad {
+    reflejos: u32,
+    transmisiones: u32,
+}
+
+const MAX_TRANSMISIONES: u32 = 6;
+
 // Lanza un rayo desde ray_origin en la dirección ray_direction: busca
 // con qué planeta choca primero y le pide a shade() el color final. Si
 // no choca con nada, el color sale del fondo estelar (skybox.rs).
@@ -54,7 +64,7 @@ fn cast_ray(
     light: &Iluminacion,
     sun_center: Vector3,
     orbit_radii: &[f32],
-    depth: u32,
+    depth: Profundidad,
 ) -> Color {
 
     let mut closest_distance = f32::INFINITY;
@@ -78,6 +88,14 @@ fn cast_ray(
         closest_intersect = intersect;
     }
 
+    // El visor participa en la misma comparacion de profundidad que los
+    // opacos. Su volumen separado no bloquea los rayos de sombra como metal.
+    let visor = laboratorio::intersectar_visor(ray_origin, ray_direction);
+    if visor.is_intersecting && visor.distance < closest_distance {
+        closest_distance = visor.distance;
+        closest_intersect = visor;
+    }
+
     // Los anillos ya no solo aparecen cuando el rayo no choca con nada:
     // ahora hay paredes y una mesa, así que el anillo solo se dibuja si
     // está MÁS CERCA que el impacto más cercano (resuelve su profundidad).
@@ -91,18 +109,20 @@ fn cast_ray(
         return filtrar_vidrios(sky_color(ray_direction), ray_origin, ray_direction, f32::INFINITY);
     }
 
-    let color = shade(
-        &closest_intersect, ray_direction, materials, light,
-        planets, cubos, sun_center, orbit_radii, depth,
-    );
+    let color = if closest_intersect.material == Some(material::VIDRIO_LABORATORIO) {
+        shade_visor(&closest_intersect, ray_direction, materials, light,
+            planets, cubos, sun_center, orbit_radii, depth)
+    } else {
+        shade(&closest_intersect, ray_direction, materials, light,
+            planets, cubos, sun_center, orbit_radii, depth)
+    };
     filtrar_vidrios(color, ray_origin, ray_direction, closest_distance)
 }
 
-// Se conserva el visor del laboratorio y se añade el ventanal superior.
-// Ambos usan el límite del impacto opaco y no lanzan rayos secundarios.
+// Solo el techo conserva su filtro anterior. El visor del laboratorio ya
+// se traza como volumen refractivo; no se vuelve a pintar encima del color.
 fn filtrar_vidrios(color: Color, origen: &Vector3, direccion: &Vector3, limite: f32) -> Color {
-    let color = techo::filtrar_ventana(color, origen, direccion, limite);
-    laboratorio::filtrar_visor(color, origen, direccion, limite)
+    techo::filtrar_ventana(color, origen, direccion, limite)
 }
 
 // Profundidad máxima de rayos reflejados: cada rebote es un cast_ray()
@@ -111,6 +131,97 @@ fn filtrar_vidrios(color: Color, origen: &Vector3, direccion: &Vector3, limite: 
 // tablero se reflejen entre sí sin verse "cortada" la reflexión.
 const MAX_REFLECTION_DEPTH: u32 = 2;
 const REFLECTION_BIAS: f32 = 0.001;
+
+// Ley de Snell vectorial. n debe mirar contra el rayo incidente y eta es
+// n_origen / n_destino. None significa reflexion interna total.
+fn refractar(d: Vector3, n: Vector3, eta: f32) -> Option<Vector3> {
+    let cos_i = (-d.dot(n)).clamp(0.0, 1.0);
+    let k = 1.0 - eta * eta * (1.0 - cos_i * cos_i);
+    if k < 0.0 { return None; }
+    Some((d * eta + n * (eta * cos_i - k.sqrt())).normalize())
+}
+
+#[cfg(test)]
+mod pruebas_optica {
+    use super::*;
+
+    #[test]
+    fn incidencia_normal_no_cambia_la_direccion() {
+        let d = Vector3::new(0.0, 0.0, -1.0);
+        let n = Vector3::new(0.0, 0.0, 1.0);
+        assert!(refractar(d, n, 1.0 / 1.52).unwrap().dot(d) > 0.99999);
+    }
+
+    #[test]
+    fn cumple_snell_y_detecta_reflexion_interna_total() {
+        let n = Vector3::new(0.0, 0.0, 1.0);
+        let d = Vector3::new(0.6, 0.0, -0.8);
+        let r = refractar(d, n, 1.0 / 1.52).unwrap();
+        assert!((r.x * 1.52 - 0.6).abs() < 0.00001);
+        let rasante = Vector3::new(0.9, 0.0, -(1.0f32 - 0.81).sqrt());
+        assert!(refractar(rasante, n, 1.52).is_none());
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn shade_visor(
+    hit: &Intersect, direccion: &Vector3, materials: &[Material],
+    light: &Iluminacion, planets: &[Planet], cubos: &Bvh,
+    sun_center: Vector3, orbit_radii: &[f32], depth: Profundidad,
+) -> Color {
+    let material = &materials[material::VIDRIO_LABORATORIO];
+    let entrando = direccion.dot(hit.normal) < 0.0;
+    let normal = if entrando { hit.normal } else { hit.normal * -1.0 };
+    let eta = if entrando { 1.0 / material.ior } else { material.ior };
+    let transmitida = refractar(*direccion, normal, eta);
+
+    // Brillo local usando albedo, textura, ka/kd/ks y shininess del vidrio.
+    // La reflexion se mezcla abajo con Fresnel, por eso se omite aqui.
+    let mut cara = *hit;
+    cara.normal = normal;
+    let local = shade(&cara, direccion, materials, light, planets, cubos,
+        sun_center, orbit_radii,
+        Profundidad { reflejos: MAX_REFLECTION_DEPTH, ..depth });
+    let tinte = mul_colors(material.textura.sample(hit.u, hit.v), material.albedo);
+    let mut color_transmitido = local;
+    if let Some(refractada) = transmitida {
+        if depth.transmisiones < MAX_TRANSMISIONES {
+            // Al entrar se avanza al vidrio; al salir se avanza al aire.
+            let origen = hit.point - normal * REFLECTION_BIAS;
+            let fondo = cast_ray(&origen, &refractada, planets, cubos, materials,
+                light, sun_center, orbit_radii,
+                Profundidad { transmisiones: depth.transmisiones + 1, ..depth });
+            color_transmitido = add_colors(
+                mul_color(mul_colors(fondo, tinte), material.transparencia),
+                mul_color(local, 1.0 - material.transparencia),
+            );
+        }
+    }
+
+    // Schlick: el vidrio refleja mas visto de lado. Al salir se usa el
+    // angulo en aire; cerca del angulo critico la reflexion tiende a uno.
+    if depth.reflejos < MAX_REFLECTION_DEPTH {
+        let coseno = if entrando {
+            (-direccion.dot(normal)).clamp(0.0, 1.0)
+        } else {
+            transmitida.map_or(0.0, |d| (-d.dot(normal)).clamp(0.0, 1.0))
+        };
+        let fresnel = if transmitida.is_none() { 1.0 } else {
+            material.reflectividad + (1.0 - material.reflectividad)
+                * (1.0 - coseno).powi(5)
+        };
+        let reflejada = *direccion - normal * (2.0 * direccion.dot(normal));
+        let origen = hit.point + normal * REFLECTION_BIAS;
+        let reflejo = cast_ray(&origen, &reflejada, planets, cubos, materials,
+            light, sun_center, orbit_radii,
+            Profundidad { reflejos: depth.reflejos + 1, ..depth });
+        add_colors(mul_color(color_transmitido, 1.0 - fresnel),
+            mul_color(reflejo, fresnel))
+    } else {
+        // Igual que en los metales: aproximacion local al agotar rebotes.
+        color_transmitido
+    }
+}
 
 // Ambiente tenue + luces locales con alcance + Sol con caída de intensidad.
 // La emisión hace visible la fuente; las sombras controlan la luz que recibe
@@ -124,7 +235,7 @@ fn shade(
     cubos: &Bvh,
     sun_center: Vector3,
     orbit_radii: &[f32],
-    depth: u32,
+    depth: Profundidad,
 ) -> Color {
 
     // El Sol no recibe la luz: ES la luz.
@@ -181,13 +292,14 @@ fn shade(
     // reflejara nada (en vez de oscurecer con un color reflejado
     // vacío): mejor un material algo menos brillante que un borde
     // negro en los rebotes más profundos.
-    let final_local = if reflectivity > 0.001 && depth < MAX_REFLECTION_DEPTH {
+    let final_local = if reflectivity > 0.001 && depth.reflejos < MAX_REFLECTION_DEPTH {
         let reflected_dir = *ray_direction
             - intersect.normal * (2.0 * ray_direction.dot(intersect.normal));
         let reflected_origin = intersect.point + intersect.normal * REFLECTION_BIAS;
         let reflected_color = cast_ray(
             &reflected_origin, &reflected_dir, planets, cubos, materials,
-            light, sun_center, orbit_radii, depth + 1,
+            light, sun_center, orbit_radii,
+            Profundidad { reflejos: depth.reflejos + 1, ..depth },
         );
         add_colors(
             mul_color(local, 1.0 - reflectivity),
@@ -205,8 +317,9 @@ fn shade(
 
 
 // Visibilidad hasta la luz: las esferas en movimiento se prueban aparte.
-// El Sol emisor no se bloquea a sí mismo. Los vidrios analíticos transmiten
-// estas luces sin refracción; no forman parte de los cubos opacos de la BVH.
+// El Sol emisor no se bloquea a si mismo. Los vidrios transmiten los rayos
+// de sombra sin desviarlos (aproximacion sin causticas). Los rayos de vista
+// y reflejo SI se refractan en el visor; no esta en la BVH opaca.
 fn bloqueado(origen:&Vector3,direccion:&Vector3,limite:f32,
              omitir:Option<usize>,cubos:&Bvh,planets:&[Planet])->bool {
     for planeta in planets {
@@ -375,7 +488,7 @@ pub fn render(
                     let screen_y = 1.0 - 2.0 * (y as f32 + 0.5) / height;
                     let direction = (right * screen_x + up * screen_y + forward).normalize();
                     let color = cast_ray(&eye, &direction, planets, cubos, materials,
-                        light, sun_center, orbit_radii, 0);
+                        light, sun_center, orbit_radii, Profundidad::default());
                     pixel.copy_from_slice(&[color.r, color.g, color.b, 255]);
                 }
             });
