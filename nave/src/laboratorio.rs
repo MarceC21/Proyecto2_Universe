@@ -4,7 +4,7 @@ use std::sync::OnceLock;
 use raylib::prelude::*;
 use crate::colisiones::CajaOrientada;
 use crate::cubo::Cubo;
-use crate::material::{CONTROLES_COMANDO, INDICADOR, PARED_NAVE, REFUERZO_NAVE};
+use crate::material::{CONTROLES_COMANDO, INDICADOR, PARED_NAVE, REFUERZO_NAVE, LUZ_LABORATORIO, BOTON_ROJO};
 
 const CENTRO_U: f32 = 4.60;
 const ANCHO: f32 = 5.40;
@@ -52,7 +52,7 @@ pub fn construir(cubos: &mut Vec<Cubo>) {
     bloque(cubos,0.0,1.14,0.86,ANCHO,0.16,1.66,PARED_NAVE);
     bloque(cubos,0.0,2.29,0.09,ANCHO,2.18,0.14,PARED_NAVE);
     bloque(cubos,0.0,3.64,0.86,ANCHO,0.56,1.66,PARED_NAVE);
-    bloque(cubos,0.0,3.345,0.78,4.85,0.025,0.80,INDICADOR);
+    bloque(cubos,0.0,3.345,0.78,4.85,0.025,0.80,LUZ_LABORATORIO);
     for u in [-2.62f32,2.62] {
         bloque(cubos,u,2.28,0.86,0.16,2.16,1.66,REFUERZO_NAVE);
         bloque(cubos,u,2.35,1.73,0.06,1.80,0.04,INDICADOR);
@@ -84,7 +84,7 @@ pub fn construir(cubos: &mut Vec<Cubo>) {
     // Panel y botón físico de apertura/cierre: aún sin entrada ni animación.
     bloque(cubos,2.30,2.14,1.75,0.38,0.74,0.08,REFUERZO_NAVE);
     bloque(cubos,2.30,2.33,1.799,0.28,0.19,0.025,CONTROLES_COMANDO);
-    muestra(cubos,2.30,1.99,1.82,0.23,0.23,0.08,Color::new(205,58,48,255));
+    bloque(cubos,2.30,1.99,1.82,0.23,0.23,0.08,BOTON_ROJO);
 }
 
 pub fn obstaculos() -> Vec<CajaOrientada> {

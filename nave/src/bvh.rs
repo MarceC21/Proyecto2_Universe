@@ -93,6 +93,29 @@ impl Bvh {
         hit
     }
 
+    // Cualquier obstáculo basta para la sombra; no buscamos el más cercano.
+    // omitir identifica el cubo emisor en el orden original de construcción.
+    pub fn ocluido(&self, origen: &Vector3, direccion: &Vector3,
+                  limite: f32, omitir: Option<usize>) -> bool {
+        if self.nodos.is_empty() || limite <= 0.0 { return false; }
+        self.visibilidad(0,origen,direccion,&componentes(origen),&componentes(direccion),limite,omitir)
+    }
+    fn visibilidad(&self,id:usize,origen:&Vector3,direccion:&Vector3,
+                   o:&[f32;3],d:&[f32;3],limite:f32,omitir:Option<usize>) -> bool {
+        if self.entrada(id,o,d,limite).is_none() { return false; }
+        let nodo=&self.nodos[id];
+        if let Some((a,b))=nodo.hijos {
+            let orden=match (self.entrada(a,o,d,limite),self.entrada(b,o,d,limite)) {
+                (Some(x),Some(y)) if y<x => [b,a], _ => [a,b],
+            };
+            self.visibilidad(orden[0],origen,direccion,o,d,limite,omitir) ||
+            self.visibilidad(orden[1],origen,direccion,o,d,limite,omitir)
+        } else {
+            self.indices[nodo.inicio..nodo.fin].iter().any(|&i|
+                Some(i)!=omitir && self.cubos[i].ocluye(origen,direccion,limite))
+        }
+    }
+
     fn visitar(&self, id: usize, origen: &Vector3, direccion: &Vector3,
         o: &[f32; 3], d: &[f32; 3], mejor: &mut f32, indice: &mut usize, hit: &mut Intersect,
     ) {
@@ -150,6 +173,34 @@ mod tests {
             }
         }
         assert!(!Bvh::new(Vec::new()).intersectar(&Vector3::zero(), &Vector3::new(0.0, 0.0, 1.0), 10.0).is_intersecting);
+    }
+
+    #[test]
+    fn sombra_finita_emisor_y_caja_girada() {
+        let cajas=vec![
+            Cubo::new(Vector3::new(0.0,0.0,3.0),Vector3::new(1.0,2.0,1.0),Color::WHITE,0.3,0.7).rotado_y(0.45),
+            Cubo::new(Vector3::new(0.0,0.0,8.0),Vector3::new(1.0,1.0,1.0),Color::WHITE,0.3,0.7),
+        ];
+        let bvh=Bvh::new(cajas);
+        let o=Vector3::zero(); let d=Vector3::new(0.0,0.0,1.0);
+        assert!(!bvh.ocluido(&o,&d,1.0,None)); // obstáculo detrás de la luz
+        assert!(bvh.ocluido(&o,&d,5.0,None));
+        assert!(!bvh.ocluido(&o,&d,5.0,Some(0))); // no autoocluir emisor
+        assert!(bvh.ocluido(&o,&d,10.0,Some(0))); // sí conservar otros obstáculos
+        assert!(!bvh.ocluido(&Vector3::new(4.0,0.0,0.0),&d,10.0,None));
+        assert!(bvh.ocluido(&Vector3::new(0.0,0.0,3.0),&d,0.1,None));
+        for i in 0..400 {
+            let o=Vector3::new((i%20) as f32*0.3-3.0, (i/20) as f32*0.12-1.2, -2.0);
+            let d=Vector3::new(0.05,-0.02,1.0).normalize();
+            for limite in [1.0,4.0,12.0] {
+                // Referencia independiente: recorrido completo y cálculo de impacto.
+                let esperado=bvh.cubos.iter().any(|c| {
+                    let h=c.ray_intersect(&o,&d);
+                    h.is_intersecting && h.distance<limite
+                });
+                assert_eq!(bvh.ocluido(&o,&d,limite,None),esperado);
+            }
+        }
     }
 
     fn comprobar(bvh: &Bvh, o: Vector3, d: Vector3, limite: f32) {

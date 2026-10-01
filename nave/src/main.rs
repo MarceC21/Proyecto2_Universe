@@ -23,7 +23,7 @@ mod techo;
 use framebuffer::Framebuffer;
 use ray_intersect::{Intersect, RayIntersect};
 use esfera::Esfera;
-use luz::Luz;
+use luz::{Luz, Iluminacion};
 use planeta::{Planet, OrbitalParameters};
 use camara::{Camera, CamaraPersona};
 use skybox::sky_color;
@@ -48,7 +48,7 @@ fn cast_ray(
     planets: &[Planet],
     cubos: &Bvh,
     materials: &[Material],
-    light: &Luz,
+    light: &Iluminacion,
     sun_center: Vector3,
     orbit_radii: &[f32],
     depth: u32,
@@ -109,29 +109,14 @@ fn filtrar_vidrios(color: Color, origen: &Vector3, direccion: &Vector3, limite: 
 const MAX_REFLECTION_DEPTH: u32 = 2;
 const REFLECTION_BIAS: f32 = 0.001;
 
-// Sombreado: ambiente + difusa (Lambert) + especular (Blinn-Phong) +
-// reflexión trazada + emisión. El Sol es la única luz de la escena y
-// es puntual.
-//
-// Dos caminos, según si el impacto trae un material del catálogo
-// (mesa.rs) o no (planetas, habitación: siguen con su color/ka/kd
-// planos de antes, sin tocar esfera.rs):
-//
-//   con material: base = textura(u,v) * albedo del material; se usan
-//   también ks, shininess, reflectividad y emisión.
-//
-//   sin material: base = intersect.color; ks = 0 (sin brillo) y
-//   reflectividad = 0 (sin rayo reflejado), igual que se comportaba
-//   todo antes de esta mesa.
-//
-// Fórmula (ver el comentario al inicio de material.rs):
-//   local = ka*base + kd*base*luz*max(N.L,0) + ks*luz*max(N.H,0)^shininess
-//   color = local*(1 - reflectividad) + reflejo*reflectividad + base*emision
+// Ambiente tenue + luces locales con alcance + Sol con caída de intensidad.
+// La emisión hace visible la fuente; las sombras controlan la luz que recibe
+// cada superficie. Acumulamos RGB flotante antes de convertir a Color.
 fn shade(
     intersect: &Intersect,
     ray_direction: &Vector3,
     materials: &[Material],
-    light: &Luz,
+    light: &Iluminacion,
     planets: &[Planet],
     cubos: &Bvh,
     sun_center: Vector3,
@@ -153,24 +138,39 @@ fn shade(
         None => (intersect.color, intersect.ka, intersect.kd, 0.0, 32.0, 0.0, 0.0),
     };
 
-    let light_dir = (light.position - intersect.point).normalize();
-    let view_dir = (Vector3::zero() - *ray_direction).normalize();
-    let half_dir = (light_dir + view_dir).normalize();
-
-    // Se recorta en 0 cuando la cara mira para el otro lado de la luz
-    // (esa cara queda sin difusa ni especular: es su "lado noche").
-    let diffuse_intensity = intersect.normal.dot(light_dir).max(0.0);
-    let specular_intensity = if diffuse_intensity > 0.0 {
-        intersect.normal.dot(half_dir).max(0.0).powf(shininess)
-    } else {
-        0.0
+    let emision_visible = match intersect.material {
+        // Solo botones/pantallitas coloreados brillan; el plástico gris no.
+        Some(material::POLIMERO | material::BOTONERA_CABINA |
+             material::CONTROLES_COMANDO | material::PANEL_ESCLUSA) => {
+            let maximo=base.r.max(base.g).max(base.b) as f32;
+            let minimo=base.r.min(base.g).min(base.b) as f32;
+            emission*((maximo-minimo)/65.0).clamp(0.0,1.0)
+        }
+        _ => emission,
     };
-
-    let ambient = mul_color(base, ka);
-    let diffuse = mul_color(mul_colors(base, light.color), kd * diffuse_intensity * light.intensity);
-    let specular = mul_color(light.color, ks * specular_intensity * light.intensity);
-
-    let local = add_colors(add_colors(ambient, diffuse), specular);
+    // Tiras, lámpara y botones emisivos puros no necesitan rayos de sombra.
+    if kd==0.0 && ks==0.0 && reflectivity==0.0 {
+        return mul_color(base,ka*luz::AMBIENTE+emision_visible);
+    }
+    let base_rgb=[base.r as f32,base.g as f32,base.b as f32];
+    let mut rgb=base_rgb.map(|c|c*ka*luz::AMBIENTE);
+    let view_dir=*ray_direction * -1.0;
+    let delta=light.sol.position-intersect.point;
+    let d2=delta.dot(delta);
+    if d2>0.000001 {
+        let energia=light.sol.intensity/(1.0+0.10*d2);
+        let color=light.sol.color;
+        sumar_luz(&mut rgb,base_rgb,kd,ks,shininess,intersect,view_dir,
+            light.sol.position,[color.r as f32/255.0*energia,
+                color.g as f32/255.0*energia,color.b as f32/255.0*energia],
+            None,cubos,planets);
+    }
+    for muestra in light.cercanas(intersect.point,intersect.normal).into_iter().flatten() {
+        sumar_luz(&mut rgb,base_rgb,kd,ks,shininess,intersect,view_dir,
+            muestra.posicion,muestra.energia,Some(muestra.cubo),cubos,planets);
+    }
+    let local=Color::new(rgb[0].clamp(0.0,255.0) as u8,rgb[1].clamp(0.0,255.0) as u8,
+        rgb[2].clamp(0.0,255.0) as u8,255);
 
     // Reflexión trazada: se relanza un rayo completo en la dirección
     // reflejada y se mezcla con el sombreado local según `reflectivity`.
@@ -197,9 +197,51 @@ fn shade(
     // Emisión: se suma color propio (líneas cian, indicadores) sin
     // depender de la luz. `emission` puede pasar de 1.0 a propósito
     // (para que se lea incluso con la ambiental baja de la nave).
-    add_colors(final_local, mul_color(base, emission))
+    add_colors(final_local, mul_color(base, emision_visible))
 }
 
+
+// Visibilidad hasta la luz: las esferas en movimiento se prueban aparte.
+// El Sol emisor no se bloquea a sí mismo. Los vidrios analíticos transmiten
+// estas luces sin refracción; no forman parte de los cubos opacos de la BVH.
+fn bloqueado(origen:&Vector3,direccion:&Vector3,limite:f32,
+             omitir:Option<usize>,cubos:&Bvh,planets:&[Planet])->bool {
+    for planeta in planets {
+        let e=&planeta.sphere;
+        if e.emissive { continue; }
+        let oc=*origen-e.center;
+        let b=oc.dot(*direccion);
+        let c=oc.dot(oc)-e.radius*e.radius;
+        if c<0.0 { return true; }
+        let discriminante=b*b-c;
+        if discriminante>=0.0 {
+            let t=-b-discriminante.sqrt();
+            if t>0.0001 && t<limite { return true; }
+        }
+    }
+    cubos.ocluido(origen,direccion,limite,omitir)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn sumar_luz(rgb:&mut [f32;3],base:[f32;3],kd:f32,ks:f32,brillo:f32,
+             hit:&Intersect,vista:Vector3,posicion:Vector3,energia:[f32;3],
+             omitir:Option<usize>,cubos:&Bvh,planets:&[Planet]) {
+    let origen=hit.point+hit.normal*0.003;
+    let delta=posicion-origen;
+    let distancia2=delta.dot(delta);
+    if distancia2<0.000001 { return; }
+    let distancia = distancia2.sqrt();
+    let direccion = delta * (1.0 / distancia);
+    let difusa=hit.normal.dot(direccion).max(0.0);
+    if difusa<=0.0 || (kd==0.0 && ks==0.0) { return; }
+    if bloqueado(&origen,&direccion,distancia-0.002,omitir,cubos,planets) { return; }
+    let mitad=direccion+vista;
+    let mitad2=mitad.dot(mitad);
+    let especular=if ks>0.0 && mitad2>0.000001 {
+        ks * hit.normal.dot(mitad * (1.0 / mitad2.sqrt())).max(0.0).powf(brillo)
+    } else { 0.0 };
+    for k in 0..3 { rgb[k]+=energia[k]*(base[k]*kd*difusa+255.0*especular); }
+}
 
 // Escala un color por un factor (recorta en 0..255 por si se pasa)
 fn mul_color(color: Color, factor: f32) -> Color {
@@ -295,7 +337,7 @@ pub fn render(
     materials: &[Material],
     eye: Vector3,
     basis: (Vector3, Vector3, Vector3),
-    light: &Luz,
+    light: &Iluminacion,
     sun_center: Vector3,
     orbit_radii: &[f32],
 ) {
@@ -529,6 +571,9 @@ fn main() {
 
     let geometria = crear_habitacion();
     let cantidad_cubos = geometria.len();
+    // Registrar emisores antes de mover los cubos a la BVH (mismos índices).
+    let light = Iluminacion::new(Luz::new(sun_center,
+        Color::new(255,244,214,255),1.7), &geometria);
     let cubos = Bvh::new(geometria);
     let obstaculos = obstaculos();
     let colisiones = colisiones::Colisiones::new(&contorno_nave(), WALL_THICKNESS)
@@ -547,13 +592,6 @@ fn main() {
     for planet in planets.iter_mut() {
         planet.update(0.0, sun_center);
     }
-
-    // La luz vive en el mismo punto que el Sol.
-    let light = Luz::new(
-        sun_center,
-        Color::new(255, 244, 214, 255), // luz solar: blanco cálido
-        1.7,
-    );
 
     // Primera persona: frente a la mesa (lado +Z), mirando hacia -Z y
     // un poco hacia abajo para ver el planetario.

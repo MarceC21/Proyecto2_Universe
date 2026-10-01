@@ -3,7 +3,7 @@
 // Modelo de color de una superficie (Blinn-Phong + reflexión + emisión):
 //
 //   base   = textura(u, v) * albedo                (color propio)
-//   local  = ka*base                               (ambiente)
+//   local  = AMBIENTE*ka*base                      (ambiente tenue)
 //          + kd*base*luz*max(N.L, 0)               (difusa de Lambert)
 //          + ks*luz*max(N.H, 0)^shininess          (especular; H = normalizado(L+V))
 //   color  = local*(1 - reflectividad) + reflejo*reflectividad + base*emision
@@ -40,6 +40,8 @@ pub const MONITOR_COMANDO: usize = 12;
 pub const CONTROLES_COMANDO: usize = 13;
 pub const HOJA_COMPUERTA: usize = 14;
 pub const PANEL_ESCLUSA: usize = 15;
+pub const LUZ_LABORATORIO: usize = 16;
+pub const BOTON_ROJO: usize = 17;
 
 #[allow(dead_code)]
 pub struct Material {
@@ -94,7 +96,7 @@ pub fn crear_materiales(pantalla_size: (usize, usize), consola_size: (usize, usi
             ka: 0.30, kd: 0.60, ks: 0.30, shininess: 40.0,
             reflectividad: 0.05, transparencia: 0.0, ior: 1.0, emision: 0.0,
         },
-        // Luces indicadoras: solo emisión (no se sombrean).
+        // Luces indicadoras: emisión visible y fuente local registrada en luz.rs.
         Material {
             nombre: "Indicador cian",
             textura: textura::solida(Color::new(70, 230, 255, 255)),
@@ -175,6 +177,18 @@ pub fn crear_materiales(pantalla_size: (usize, usize), consola_size: (usize, usi
             textura: textura::panel_esclusa(), albedo: Color::WHITE,
             ka: 0.45, kd: 0.35, ks: 0.08, shininess: 20.0,
             reflectividad: 0.0, transparencia: 0.0, ior: 1.0, emision: 0.22,
+        },
+        Material {
+            nombre: "Lampara calida de laboratorio",
+            textura: textura::solida(Color::new(255,221,152,255)), albedo: Color::WHITE,
+            ka: 0.0, kd: 0.0, ks: 0.0, shininess: 1.0,
+            reflectividad: 0.0, transparencia: 0.0, ior: 1.0, emision: 1.0,
+        },
+        Material {
+            nombre: "Boton rojo iluminado",
+            textura: textura::solida(Color::new(230,56,38,255)), albedo: Color::WHITE,
+            ka: 0.0, kd: 0.0, ks: 0.0, shininess: 1.0,
+            reflectividad: 0.0, transparencia: 0.0, ior: 1.0, emision: 0.9,
         },
     ]
 }

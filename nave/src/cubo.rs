@@ -72,6 +72,39 @@ impl Cubo {
         self
     }
 
+    // Datos precalculados para colocar luces en las superficies emisivas.
+    pub fn marco_luz(&self) -> (Vector3, Vector3, [Vector3; 3]) {
+        (self.center, self.half_size, [
+            Vector3::new(self.cos_y, 0.0, -self.sin_y),
+            Vector3::new(0.0, 1.0, 0.0),
+            Vector3::new(self.sin_y, 0.0, self.cos_y),
+        ])
+    }
+
+    // Solo visibilidad de un segmento: evita normales, UV y materiales.
+    pub fn ocluye(&self, origen: &Vector3, direccion: &Vector3, limite: f32) -> bool {
+        let offset = *origen - self.center;
+        let (c,s) = (self.cos_y,self.sin_y);
+        let (o,d) = if s == 0.0 && c == 1.0 { (offset,*direccion) } else {
+            (Vector3::new(c*offset.x-s*offset.z,offset.y,s*offset.x+c*offset.z),
+             Vector3::new(c*direccion.x-s*direccion.z,direccion.y,s*direccion.x+c*direccion.z))
+        };
+        let o=[o.x,o.y,o.z]; let d=[d.x,d.y,d.z];
+        let h=[self.half_size.x,self.half_size.y,self.half_size.z];
+        let (mut cerca,mut lejos)=(0.0f32,limite);
+        if limite <= EPSILON { return false; }
+        for i in 0..3 {
+            if d[i].abs() < EPSILON {
+                if o[i] < -h[i] || o[i] > h[i] { return false; }
+            } else {
+                let a=(-h[i]-o[i])/d[i]; let b=(h[i]-o[i])/d[i];
+                cerca=cerca.max(a.min(b)); lejos=lejos.min(a.max(b));
+                if cerca>lejos { return false; }
+            }
+        }
+        lejos>EPSILON && cerca<limite
+    }
+
     pub fn con_material(mut self, material: usize, uv_tile: Option<f32>) -> Self {
         self.material = Some(material);
         self.uv_tile = uv_tile;
