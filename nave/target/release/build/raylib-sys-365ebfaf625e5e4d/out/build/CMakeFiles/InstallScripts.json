@@ -1,0 +1,10 @@
+{
+	"InstallScripts" : 
+	[
+		"C:/Users/mache/Desktop/U 6S/GRAFICAS/ProyectoUniverso/Proyecto2_Universe/nave/target/release/build/raylib-sys-365ebfaf625e5e4d/out/build/cmake_install.cmake",
+		"C:/Users/mache/Desktop/U 6S/GRAFICAS/ProyectoUniverso/Proyecto2_Universe/nave/target/release/build/raylib-sys-365ebfaf625e5e4d/out/build/raylib/cmake_install.cmake",
+		"C:/Users/mache/Desktop/U 6S/GRAFICAS/ProyectoUniverso/Proyecto2_Universe/nave/target/release/build/raylib-sys-365ebfaf625e5e4d/out/build/raylib/external/glfw/cmake_install.cmake",
+		"C:/Users/mache/Desktop/U 6S/GRAFICAS/ProyectoUniverso/Proyecto2_Universe/nave/target/release/build/raylib-sys-365ebfaf625e5e4d/out/build/raylib/external/glfw/src/cmake_install.cmake"
+	],
+	"Parallel" : false
+}
