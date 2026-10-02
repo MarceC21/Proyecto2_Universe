@@ -6,7 +6,8 @@
 //   y local = hacia arriba, 0 = suelo
 //   z local = hacia el frente (la cara con el nombre)
 // punto() pasa de local a mundo con la misma rotación que Cubo::rotado_y.
-//
+
+
 // Las columnas alternan pasos durante el recorrido; las texturas se conservan.
 use raylib::prelude::*;
 use crate::colisiones::{Colisiones, Obstaculo};
@@ -116,8 +117,6 @@ impl Tars {
         diferencia.abs() <= paso
     }
 
-    // Devuelve true solo si hay que refrescar los 12 cubos del personaje.
-    // El jugador es opcional: en modo orbital no hay un cuerpo invisible bloqueando.
     pub fn actualizar(&mut self, dt: f32, colisiones: &Colisiones,
                       obstaculos: &[Obstaculo], jugador: Option<Vector3>) -> bool {
         if !dt.is_finite() || dt <= 0.0 { return false; }
@@ -223,9 +222,9 @@ impl Tars {
     }
 }
 
-// ---------------------------------------------------------------------
-// Texturas (se generan una vez al arrancar, desde material.rs)
-// ---------------------------------------------------------------------
+
+// Texturas de tars
+
 const GRIS: (f32, f32, f32) = (172.0, 176.0, 182.0);
 const AMARILLO: Color = Color { r: 232, g: 196, b: 48, a: 255 };
 
@@ -272,6 +271,8 @@ pub fn textura_negro() -> Textura {
     }
     t
 }
+
+//INTENTO DE BRAILLE 
 
 // Letras 5x7. El texto se lee de abajo hacia arriba (girado 90°), como en la maqueta.
 const LETRAS: [[&str; 7]; 4] = [

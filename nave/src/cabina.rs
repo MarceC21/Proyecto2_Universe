@@ -1,5 +1,5 @@
-// Mesa de cabina bajo las tres ventanas, construida una sola vez.
-// Reutiliza los materiales y las texturas de mesa.rs, sin modificarlos.
+// Mesa de cabina bajo las tres ventanas, construida una sola vez
+// Reutiliza los materiales y las texturas de mesa.rs, sin modificarlos
 use raylib::prelude::*;
 
 use crate::colisiones::CajaOrientada;
@@ -73,7 +73,7 @@ pub fn obstaculos_cabina(contorno: &[(f32, f32); 8], pared: f32) -> Vec<CajaOrie
             angulo_y: t.angulo,
         }
     }).collect();
-    // La misma referencia local coloca geometría y colisiones de los sillones.
+    // La misma referencia local coloca geometría y colisiones de los sillones
     let central = &tramos[1];
     for x in SILLON_X {
         let centro = central.punto(x, 0.0, SILLON_Z);
@@ -91,13 +91,12 @@ pub fn construir_cabina(cubos: &mut Vec<Cubo>, contorno: &[(f32, f32); 8], pared
         let t = tramo;
         let top = TABLE_TOP_Y;
         let metal = Some(METAL_TILE);
-        // Misma construcción por capas que la mesa central: soporte,
-        // faldón oscuro, tablero metálico y bordes elevados.
+        // Misma construcción por capas que la mesa central
         t.bloque(cubos, (0.0, top - BODY_THICKNESS * 0.5, FONDO * 0.5),
             (t.largo, BODY_THICKNESS, FONDO), METAL_CLARO, metal);
         t.bloque(cubos, (0.0, top - BODY_THICKNESS - 0.04, FONDO * 0.5),
             (t.largo, 0.08, FONDO - 0.10), METAL_OSCURO, metal);
-        // Panel posterior pegado al antepecho y dos apoyos por tramo.
+        // Panel posterior pegado al antepecho y dos apoyos por tramo
         let soporte_h = top - BODY_THICKNESS - 0.08;
         t.bloque(cubos, (0.0, soporte_h * 0.5, 0.12),
             (t.largo, soporte_h, 0.24), METAL_OSCURO, metal);
@@ -130,7 +129,7 @@ pub fn construir_cabina(cubos: &mut Vec<Cubo>, contorno: &[(f32, f32); 8], pared
     }
 }
 
-// Monitor vertical: su cara +Z mira al operador. UV X/Y mantiene el radar circular.
+// Monitor vertical: su cara +Z mira al operador. UV X/Y mantiene el radar circular
 fn monitor(t: &Tramo, cubos: &mut Vec<Cubo>, x: f32, ancho: f32, material: usize) {
     let alto = ancho / 1.6;
     let y = TABLE_TOP_Y + 0.23 + alto * 0.5;
@@ -152,7 +151,7 @@ fn panel(t: &Tramo, cubos: &mut Vec<Cubo>, x: f32, z: f32, ancho: f32, fondo: f3
 }
 
 fn palanca(t: &Tramo, cubos: &mut Vec<Cubo>, x: f32) {
-    // Base, ranura, pivote, eje y empuñadura. Geometría estática por ahora.
+    // Base, ranura, pivote, eje y empuñadura. Geometría estática por ahora
     let y = TABLE_TOP_Y;
     t.bloque(cubos, (x, y + 0.05, 1.08),
         (0.36, 0.10, 0.48), METAL_CLARO, Some(METAL_TILE));
@@ -170,28 +169,28 @@ fn palanca(t: &Tramo, cubos: &mut Vec<Cubo>, x: f32) {
 
 fn mando_central(t: &Tramo, cubos: &mut Vec<Cubo>) {
     monitor(t, cubos, 0.0, 2.40, RADAR_CABINA);
-    // Botoneras flanqueando la pantalla principal, como en la referencia.
+    // Botoneras flanqueando la pantalla principal, como en la referencia
     for x in [-2.30f32, 2.30] {
         panel(t, cubos, x, 0.74, 1.20, 0.96, BOTONERA_CABINA);
-        // Dial físico junto al panel, con indicador de posición.
+        // Dial físico junto al panel, con indicador de posición
         let dx = x + x.signum() * 0.91;
         t.bloque(cubos, (dx, TABLE_TOP_Y + 0.10, 0.91),
             (0.24, 0.20, 0.24), METAL_CLARO, Some(METAL_TILE));
         t.bloque(cubos, (dx, TABLE_TOP_Y + 0.207, 0.84),
             (0.025, 0.015, 0.085), INDICADOR, None);
     }
-    // Panel de estado entre las palancas, más cerca del operador.
+    // Panel de estado entre las palancas, más cerca del operador
     panel(t, cubos, 0.0, 1.05, 0.90, 0.5625, SISTEMAS_CABINA);
     palanca(t, cubos, -0.86);
     palanca(t, cubos, 0.86);
 }
 
 fn mando_lateral(t: &Tramo, cubos: &mut Vec<Cubo>, izquierda: bool) {
-    // Instrumentos auxiliares, con distribución espejada y pantalla pequeña.
+    // Instrumentos auxiliares, con distribución espejada y pantalla pequeña
     let lado = if izquierda { -1.0 } else { 1.0 };
     monitor(t, cubos, lado * 0.80, 1.12, SISTEMAS_CABINA);
     panel(t, cubos, -lado * 0.78, 0.77, 1.10, 0.88, BOTONERA_CABINA);
-    // Tres interruptores físicos al frente del monitor.
+    // Tres interruptores físicos al frente del monitor
     for i in 0..3 {
         let x = lado * 0.80 - 0.32 + i as f32 * 0.32;
         t.bloque(cubos, (x, TABLE_TOP_Y + 0.035, 1.04),
@@ -205,7 +204,7 @@ fn mando_lateral(t: &Tramo, cubos: &mut Vec<Cubo>, izquierda: bool) {
 
 
 fn construir_sillon(t: &Tramo, cubos: &mut Vec<Cubo>, x: f32) {
-    // Mira hacia -Z local, hacia la consola. Respaldo completamente vertical.
+    // Mira hacia -Z local, hacia la consola. Respaldo completamente vertical
     let metal = Some(METAL_TILE);
     let tela = Some(0.60); // tamaño del patrón en unidades de mundo, igual en cada cara
     let z = SILLON_Z;
@@ -215,19 +214,19 @@ fn construir_sillon(t: &Tramo, cubos: &mut Vec<Cubo>, x: f32) {
         (0.34, 0.27, 0.38), METAL_CLARO, metal);
     t.bloque(cubos, (x, 0.405, z),
         (1.12, 0.13, 1.18), METAL_OSCURO, metal);
-    // Cojín grueso y un panel superior más pequeño para marcar su volumen.
+    // Cojín grueso y un panel superior más pequeño para marcar su volumen
     t.bloque(cubos, (x, 0.54, z - 0.035),
         (1.02, 0.16, 1.05), TAPIZADO_CABINA, tela);
     t.bloque(cubos, (x, 0.63, z - 0.075),
         (0.88, 0.06, 0.89), TAPIZADO_CABINA, tela);
-    // Carcasa trasera; cojín en la cara que mira a las ventanas.
+    // Carcasa trasera; cojín en la cara que mira a las ventanas
     t.bloque(cubos, (x, 1.14, z + 0.54),
         (1.12, 1.24, 0.25), METAL_OSCURO, metal);
     t.bloque(cubos, (x, 1.17, z + 0.365),
         (0.98, 1.02, 0.18), TAPIZADO_CABINA, tela);
     t.bloque(cubos, (x, 0.85, z + 0.25),
         (0.84, 0.25, 0.12), TAPIZADO_CABINA, tela);
-    // Apoyacabezas con soporte y almohadilla frontal.
+    // Apoyacabezas con soporte y almohadilla frontal
     t.bloque(cubos, (x, 1.78, z + 0.54),
         (0.40, 0.22, 0.13), METAL_CLARO, metal);
     t.bloque(cubos, (x, 1.89, z + 0.50),

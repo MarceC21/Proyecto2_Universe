@@ -1,20 +1,6 @@
-// La mesa de control: tablero metálico con marco, pantalla azul y un
-// módulo de controles, inspirada en una consola futurista. Todo son
-// cubos escalados (las curvas de la referencia se simplifican).
-//
-// Vista lateral (no a escala):
-//
-//        marco (sube FRAME_RISE)     pantalla (SCREEN_RISE)
-//   ┌───┐                                 ┌───┐
-//   │███████████████████████████████████████████│ <- tablero (BODY)
-//        ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀            <- faldón oscuro
-//                    ▄▄▄▄▄▄▄▄▄                       <- collar
-//                      █████                         <- pedestal
-//               ▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄                  <- base
-//
-// Origen local: (MESA_CENTRO_X, 0, MESA_CENTRO_Z) en el suelo. Todas las
-// piezas se definen respecto a él; cambiar MESA_CENTRO_* mueve la mesa
-// completa, incluido el planetario (ver planetario_origen).
+// La mesa de control: tablero metálico con marco, pantalla azul y un módulo de controles, inspirada en una consola futurista. 
+// Todo son cubos escalados (las curvas de la referencia se simplifican).
+
 
 use raylib::prelude::*;
 

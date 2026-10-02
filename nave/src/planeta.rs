@@ -46,19 +46,12 @@ impl Planet {
     }
 
     // Avanza la órbita y la rotación propia según cuánto TIEMPO REAL
-    // pasó desde el frame anterior (delta_time), no según cuántos
-    // frames se dibujaron. Así la velocidad orbital es la misma: a 30 FPS se
-    // llama con un delta_time más grande, a 144 FPS con uno más chico,
-    // pero el planeta avanza la misma cantidad de radianes por
-    // segundo real en cualquiera de los dos casos.
+    // pasó desde el frame anterior (delta_time)
     pub fn update(&mut self, delta_time: f32, sun_center: Vector3) {
         self.orbital.orbital_angle += self.orbital.orbital_speed * delta_time;
         self.orbital.rotation_angle += self.orbital.rotation_speed * delta_time;
 
-        // Se mantienen los ángulos acotados a una vuelta completa. No
-        // cambia nada visualmente (cos/sin son periódicos), es solo
-        // para que el número no crezca sin límite si la simulación
-        // queda corriendo muchas horas.
+        // Se mantienen los ángulos acotados a una vuelta completa
         let two_pi = std::f32::consts::TAU;
         self.orbital.orbital_angle %= two_pi;
         self.orbital.rotation_angle %= two_pi;
@@ -75,10 +68,5 @@ impl Planet {
                 self.orbital.distance * self.orbital.orbital_angle.sin(),
             );
 
-        // rotation_angle no tiene efecto visual todavía: una esfera de
-        // color plano se ve igual gire o no gire. Queda calculado y
-        // listo para cuando se agregue textura (el siguiente hito
-        // natural después de este), que es cuando de verdad se va a
-        // notar la rotación propia.
     }
 }

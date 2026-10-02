@@ -100,7 +100,6 @@ impl Colisiones {
         let (sx, sz) = (dx / pasos as f32, dz / pasos as f32);
         let (mut x, mut z) = (x, z);
         for _ in 0..pasos {
-            // Resolver por ejes permite deslizarse junto a las paredes.
             if !self.bloqueado(x + sx, z, radio, obstaculos) {
                 x += sx;
             }
@@ -229,7 +228,6 @@ mod tests {
         let colisiones = Colisiones::new(&contorno, crate::escena::WALL_THICKNESS)
             .con_cajas(cajas.collect());
         // Cada centro estaba protegido en el camino original y debe estarlo
-        // tambien en el camino nuevo, con puertas abiertas o cerradas.
         for caja in &colisiones.cajas {
             for abierta in [false, true] {
                 assert!(colisiones.bloqueado_compuerta(

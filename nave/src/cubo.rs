@@ -1,21 +1,23 @@
+// Un poco de teoria de como funciona lo del cubo
+
 // El cubo (en realidad una caja alineada con los ejes, AABB)
 //
-// Una caja alineada con los ejes es la intersección de tres "losas"
-// (slabs): una por eje, cada una limitada por dos planos paralelos.
+// Una caja alineada con los ejes es la intersección de tres "losas" : una por eje, cada una limitada por dos planos paralelos.
 //      min.x <= x <= max.x,   min.y <= y <= max.y,   min.z <= z <= max.z
-//
+
+// Fórmula usada: 
 // Para el rayo P(t) = O + t*D, en cada eje i el rayo entra a la losa en
 //      t0 = (min_i - O_i) / D_i      t1 = (max_i - O_i) / D_i
 // (se intercambian si D_i < 0, para que t0 <= t1).
-//
+
+
 // El rayo está dentro de la caja mientras esté dentro de LAS TRES losas
 // a la vez, es decir, en el intervalo
 //      t_near = max(t0_x, t0_y, t0_z)     t_far = min(t1_x, t1_y, t1_z)
 // Hay impacto si t_near <= t_far (y t_far > 0: la caja no está detrás).
-//
-// La normal del impacto es la del plano que dio el t_near (la cara por
-// la que el rayo ENTRA). Rayo paralelo a un eje (D_i ~ 0): no hay
-// división; solo se comprueba que el origen esté dentro de esa losa.
+
+// La normal del impacto es la del plano que dio el t_near (la cara por la que el rayo ENTRA). 
+// Rayo paralelo a un eje (D_i ~ 0): no hay división, solo se comprueba que el origen esté dentro de esa losa.
 
 use raylib::prelude::*;
 
@@ -56,7 +58,7 @@ impl Cubo {
         }
     }
 
-    // La caja conserva dimensiones locales; min/max se actualizan como
+    // La caja conserva dimensiones locales: min/max se actualizan como
     // límites globales para que también describan el volumen rotado.
     pub fn rotado_y(mut self, angle: f32) -> Self {
         let (sin_y, cos_y) = angle.sin_cos();

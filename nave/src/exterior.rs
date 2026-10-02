@@ -1,6 +1,5 @@
 // Exterior: dos alas solares, balizas de salida y tres motores tubulares.
 // Toda la estructura opaca usa cubos texturizados y entra en la BVH estatica.
-// No mueve el contorno, los muebles, el pasillo ni sus puertas.
 use std::sync::OnceLock;
 use raylib::prelude::*;
 use crate::colisiones::Obstaculo;
@@ -45,8 +44,7 @@ fn cristales() -> &'static [Cubo; 3] {
     }))
 }
 
-// Interseccion de las dos caras y los cantos. Normales exteriores para
-// distinguir aire->vidrio y vidrio->aire, igual que en el laboratorio.
+// Interseccion de las dos caras y los canto
 pub fn intersectar_ventanas(o: &Vector3, d: &Vector3, limite: f32) -> Intersect {
     let mut mejor = Intersect::empty();
     let mut distancia = limite;
@@ -121,8 +119,7 @@ fn paneles_solares(p: &mut Vec<Pieza>) {
 fn balizas_salida(p: &mut Vec<Pieza>) {
     let x = crate::pasillo::ANCHO_INTERIOR*0.5+WALL_THICKNESS;
     let z = crate::pasillo::PUERTA_Z;
-    // Luz propia solamente: BALIZA_SALIDA no se registra como fuente en luz.rs,
-    // por lo que estas señales no cambian la iluminacion existente.
+    // Luz propia solamente, por lo que estas señales no cambian la iluminacion existente.
     for extremo in [-1.0f32,1.0] {
         let borde = z+extremo*(crate::pasillo::PUERTA_ANCHO*0.5+0.25);
         pieza(p,(x+0.04,1.85,borde),(0.12,0.60,0.26),REFUERZO_NAVE,false);
@@ -133,8 +130,7 @@ fn balizas_salida(p: &mut Vec<Pieza>) {
     pieza(p,(x+0.11,y,z),(0.035,0.08,0.65),BALIZA_SALIDA,false);
 }
 
-// Anillo hueco aproximado con franjas de cubos: seccion redondeada sin
-// nuevas primitivas ni bibliotecas. ri=0 produce un fondo cerrado.
+// Anillo hueco aproximado con franjas de cubos
 fn anillo(p: &mut Vec<Pieza>, x: f32, z: f32, largo: f32,
     radio: f32, ri: f32, material: usize) {
     const FRANJAS: usize = 12;
@@ -159,9 +155,10 @@ fn anillo(p: &mut Vec<Pieza>, x: f32, z: f32, largo: f32,
     }
 }
 
+// Para los motores 
 fn motores(p: &mut Vec<Pieza>) {
     let base = crate::pasillo::FIN_Z + WALL_THICKNESS;
-    // Soporte unido a la cara EXTERIOR de la pared terminal del pasillo.
+    // Soporte unido a la cara EXTERIOR de la pared terminal del pasillo
     pieza(p,(0.0,MOTOR_Y,base+0.30),(10.30,3.50,0.64),PARED_NAVE,true);
     for y in [MOTOR_Y-1.65,MOTOR_Y+1.65] {
         pieza(p,(0.0,y,base+0.64),(10.30,0.18,0.16),REFUERZO_NAVE,false);
@@ -179,6 +176,7 @@ fn motores(p: &mut Vec<Pieza>) {
     }
 }
 
+// Todas las piezas para contruir el exterior de la nave 
 fn piezas() -> Vec<Pieza> {
     let mut p = Vec::with_capacity(256);
     paneles_solares(&mut p);
@@ -201,8 +199,6 @@ pub fn obstaculos() -> Vec<Obstaculo> {
             max_x:p.centro.x+p.tamano.x*0.5,
             min_z:p.centro.z-p.tamano.z*0.5,
             max_z:p.centro.z+p.tamano.z*0.5 }).collect();
-    // Huellas conservadoras de los motores; dejan libre todo el acceso
-    // lateral situado en PUERTA_Z, bastante antes de este conjunto.
     let base = crate::pasillo::FIN_Z + WALL_THICKNESS;
     for x in MOTORES_X {
         resultado.push(Obstaculo { min_x:x-RADIO_MOTOR-0.10,

@@ -35,14 +35,15 @@ use material::{Material, crear_materiales};
 use mesa::{pantalla_texture_size, consola_texture_size};
 use escena::{
     crear_habitacion, obstaculos, planetario_origen, EYE_HEIGHT, PLAYER_RADIUS, PLAYER_START_X,
-    PLAYER_START_Z, contorno_nave, WALL_THICKNESS,
+    PLAYER_START_Z, contorno_nave, WALL_THICKNESS, ROOM_FRONT_Z, ROOM_HEIGHT,
 };
 
 // ---------------------------------------------------------------------
 // Trazado de rayos y sombreado
 // ---------------------------------------------------------------------
 
-// Presupuestos separados: atravesar las dos caras del vidrio no consume
+// Presupuestos separados
+// atravesar las dos caras del vidrio no consume
 // los dos rebotes disponibles para los metales. Ambas ramas son acotadas.
 #[derive(Clone, Copy, Default)]
 struct Profundidad {
@@ -52,9 +53,9 @@ struct Profundidad {
 
 const MAX_TRANSMISIONES: u32 = 6;
 
-// Lanza un rayo desde ray_origin en la dirección ray_direction: busca
-// con qué planeta choca primero y le pide a shade() el color final. Si
-// no choca con nada, el color sale del fondo estelar (skybox.rs).
+
+// Para cada rayo que choca con un objeto, se calcula el color final
+// Se consideran los materiales, la luz ambiental, la luz local y el sol.
 fn cast_ray(
     ray_origin: &Vector3,
     ray_direction: &Vector3,
@@ -102,9 +103,6 @@ fn cast_ray(
         closest_intersect = ventana;
     }
 
-    // Los anillos ya no solo aparecen cuando el rayo no choca con nada:
-    // ahora hay paredes y una mesa, así que el anillo solo se dibuja si
-    // está MÁS CERCA que el impacto más cercano (resuelve su profundidad).
     if let Some((ring_t, ring_color)) = orbit_ring_hit(ray_origin, ray_direction, sun_center, orbit_radii, closest_distance) {
         if ring_t < closest_distance {
             return filtrar_vidrios(ring_color, ray_origin, ray_direction, ring_t);
@@ -127,21 +125,31 @@ fn cast_ray(
     filtrar_vidrios(color, ray_origin, ray_direction, closest_distance)
 }
 
-// Solo el techo conserva su filtro anterior. Laboratorio y cabina ya
-// se trazan como volumenes refractivos; no se pintan encima del color.
+// Solo el techo conserva su filtro 
+// Laboratorio y cabina trazan como volumenes refractivos, no se pintan encima del color.
 fn filtrar_vidrios(color: Color, origen: &Vector3, direccion: &Vector3, limite: f32) -> Color {
     techo::filtrar_ventana(color, origen, direccion, limite)
 }
 
-// Profundidad máxima de rayos reflejados: cada rebote es un cast_ray()
-// completo (consulta la BVH y los planetas), así que se mantiene bajo
-// para no disparar el costo. 2 alcanza para que el marco metálico y el
-// tablero se reflejen entre sí sin verse "cortada" la reflexión.
+// Profundidad máxima de rayos reflejados
+// cada rebote es un cast_ray()completo (consulta la BVH y los planetas)
 const MAX_REFLECTION_DEPTH: u32 = 2;
 const REFLECTION_BIAS: f32 = 0.001;
 
-// Ley de Snell vectorial. n debe mirar contra el rayo incidente y eta es
-// n_origen / n_destino. None significa reflexion interna total.
+
+const REFLEXION_MINIMA: f32 = 0.08;
+
+// Si el vidrio deja pasar mas de (1 - este valor) de la luz, su brillo local
+// pesa menos del 5 % y no se calculan sombras para el.
+const PESO_LOCAL_MINIMO: f32 = 0.05;
+
+// Reflexion de Fresnel del vidrio por debajo de este valor: no se lanza rayo.
+const FRESNEL_MINIMO: f32 = 0.08;
+// Luces cuyo aporte maximo (sin sombra) es menor a este valor, en escala 0..255
+// por canal, se descartan sin lanzar rayo de sombra.
+const UMBRAL_APORTE_LUZ: f32 = 4.0;
+
+// Para cuando el rayo choca con un vidrio: calcula la direccion de la refraccion
 fn refractar(d: Vector3, n: Vector3, eta: f32) -> Option<Vector3> {
     let cos_i = (-d.dot(n)).clamp(0.0, 1.0);
     let k = 1.0 - eta * eta * (1.0 - cos_i * cos_i);
@@ -184,17 +192,19 @@ fn shade_vidrio(
     let transmitida = refractar(*direccion, normal, eta);
 
     // Brillo local usando albedo, textura, ka/kd/ks y shininess del vidrio.
-    // La reflexion se mezcla abajo con Fresnel, por eso se omite aqui.
     let mut cara = *hit;
     cara.normal = normal;
-    let local = shade(&cara, direccion, materials, light, planets, cubos,
-        sun_center, orbit_radii,
-        Profundidad { reflejos: MAX_REFLECTION_DEPTH, ..depth });
     let tinte = mul_colors(material.textura.sample(hit.u, hit.v), material.albedo);
+    let local = if 1.0 - material.transparencia < PESO_LOCAL_MINIMO {
+        mul_color(tinte, material.ka * luz::AMBIENTE)
+    } else {
+        shade(&cara, direccion, materials, light, planets, cubos,
+            sun_center, orbit_radii,
+            Profundidad { reflejos: MAX_REFLECTION_DEPTH, ..depth })
+    };
     let mut color_transmitido = local;
     if let Some(refractada) = transmitida {
         if depth.transmisiones < MAX_TRANSMISIONES {
-            // Al entrar se avanza al vidrio; al salir se avanza al aire.
             let origen = hit.point - normal * REFLECTION_BIAS;
             let fondo = cast_ray(&origen, &refractada, planets, cubos, materials,
                 light, sun_center, orbit_radii,
@@ -206,8 +216,7 @@ fn shade_vidrio(
         }
     }
 
-    // Schlick: el vidrio refleja mas visto de lado. Al salir se usa el
-    // angulo en aire; cerca del angulo critico la reflexion tiende a uno.
+    // Schlick: el vidrio refleja mas visto de lado
     if depth.reflejos < MAX_REFLECTION_DEPTH {
         let coseno = if entrando {
             (-direccion.dot(normal)).clamp(0.0, 1.0)
@@ -218,6 +227,8 @@ fn shade_vidrio(
             material.reflectividad + (1.0 - material.reflectividad)
                 * (1.0 - coseno).powi(5)
         };
+        // Incidencia casi normal (y salida del vidrio): reflejo < 8 %, se omite
+        if fresnel < FRESNEL_MINIMO { return color_transmitido; }
         let reflejada = *direccion - normal * (2.0 * direccion.dot(normal));
         let origen = hit.point + normal * REFLECTION_BIAS;
         let reflejo = cast_ray(&origen, &reflejada, planets, cubos, materials,
@@ -232,8 +243,7 @@ fn shade_vidrio(
 }
 
 // Ambiente tenue + luces locales con alcance + Sol con caída de intensidad.
-// La emisión hace visible la fuente; las sombras controlan la luz que recibe
-// cada superficie. Acumulamos RGB flotante antes de convertir a Color.
+// La emisión hace visible la fuente; las sombras controlan la luz que recibe cada superficie
 fn shade(
     intersect: &Intersect,
     ray_direction: &Vector3,
@@ -246,7 +256,7 @@ fn shade(
     depth: Profundidad,
 ) -> Color {
 
-    // El Sol no recibe la luz: ES la luz.
+    // El Sol no recibe la luz: ES UNA LUZ
     if intersect.emissive {
         return intersect.color;
     }
@@ -261,7 +271,7 @@ fn shade(
     };
 
     let emision_visible = match intersect.material {
-        // Solo botones/pantallitas coloreados brillan; el plástico gris no.
+        // Solo botones/pantallitas coloreados brillan; el plástico gris no
         Some(material::POLIMERO | material::BOTONERA_CABINA |
              material::CONTROLES_COMANDO | material::PANEL_ESCLUSA) => {
             let maximo=base.r.max(base.g).max(base.b) as f32;
@@ -270,7 +280,7 @@ fn shade(
         }
         _ => emission,
     };
-    // Tiras, lámpara y botones emisivos puros no necesitan rayos de sombra.
+    // Tiras, lámpara y botones emisivos puros no necesitan rayos de sombra
     if kd==0.0 && ks==0.0 && reflectivity==0.0 {
         return mul_color(base,ka*luz::AMBIENTE+emision_visible);
     }
@@ -300,7 +310,7 @@ fn shade(
     // reflejara nada (en vez de oscurecer con un color reflejado
     // vacío): mejor un material algo menos brillante que un borde
     // negro en los rebotes más profundos.
-    let final_local = if reflectivity > 0.001 && depth.reflejos < MAX_REFLECTION_DEPTH {
+    let final_local = if reflectivity >= REFLEXION_MINIMA && depth.reflejos < MAX_REFLECTION_DEPTH {
         let reflected_dir = *ray_direction
             - intersect.normal * (2.0 * ray_direction.dot(intersect.normal));
         let reflected_origin = intersect.point + intersect.normal * REFLECTION_BIAS;
@@ -317,17 +327,11 @@ fn shade(
         local
     };
 
-    // Emisión: se suma color propio (líneas cian, indicadores) sin
-    // depender de la luz. `emission` puede pasar de 1.0 a propósito
-    // (para que se lea incluso con la ambiental baja de la nave).
     add_colors(final_local, mul_color(base, emision_visible))
 }
 
 
-// Visibilidad hasta la luz: las esferas en movimiento se prueban aparte.
-// El Sol emisor no se bloquea a si mismo. Los vidrios transmiten los rayos
-// de sombra sin desviarlos (aproximacion sin causticas). Los rayos de vista
-// y reflejo SI se refractan en laboratorio y cabina, fuera de la BVH opaca.
+// Visibilidad hasta la luz: las esferas en movimiento se prueban aparte
 fn bloqueado(origen:&Vector3,direccion:&Vector3,limite:f32,
              omitir:Option<usize>,cubos:&Bvh,planets:&[Planet])->bool {
     for planeta in planets {
@@ -358,13 +362,17 @@ fn sumar_luz(rgb:&mut [f32;3],base:[f32;3],kd:f32,ks:f32,brillo:f32,
     let direccion = delta * (1.0 / distancia);
     let difusa=hit.normal.dot(direccion).max(0.0);
     if difusa<=0.0 || (kd==0.0 && ks==0.0) { return; }
-    if bloqueado(&origen,&direccion,distancia-0.002,omitir,cubos,planets) { return; }
     let mitad=direccion+vista;
     let mitad2=mitad.dot(mitad);
     let especular=if ks>0.0 && mitad2>0.000001 {
         ks * hit.normal.dot(mitad * (1.0 / mitad2.sqrt())).max(0.0).powf(brillo)
     } else { 0.0 };
-    for k in 0..3 { rgb[k]+=energia[k]*(base[k]*kd*difusa+255.0*especular); }
+    let aporte=[0,1,2].map(|k| energia[k]*(base[k]*kd*difusa+255.0*especular));
+    // Aporte exacto de la luz SIN sombra: si es imperceptible (< UMBRAL_APORTE_LUZ
+    // sobre 255 en todos los canales) se omite el rayo de sombra, que es lo caro.
+    if aporte[0].max(aporte[1]).max(aporte[2]) < UMBRAL_APORTE_LUZ { return; }
+    if bloqueado(&origen,&direccion,distancia-0.002,omitir,cubos,planets) { return; }
+    for k in 0..3 { rgb[k]+=aporte[k]; }
 }
 
 // Escala un color por un factor (recorta en 0..255 por si se pasa)
@@ -388,8 +396,6 @@ fn mul_colors(a: Color, b: Color) -> Color {
     )
 }
 
-// Suma dos colores canal por canal, recortando en 255 (satura, no
-// desborda).
 fn add_colors(a: Color, b: Color) -> Color {
     Color::new(
         (a.r as u16 + b.r as u16).min(255) as u8,
@@ -399,13 +405,9 @@ fn add_colors(a: Color, b: Color) -> Color {
     )
 }
 
-// Anillos de órbita, como referencia visual (no es algo que se vería
-// en el espacio real: es una ayuda, igual que en cualquier diagrama
-// del sistema solar). Se calculan SOLO cuando el rayo no chocó con
-// ningún planeta: se intersecta el rayo contra el plano orbital
-// (y = altura del Sol) y se compara qué tan lejos quedó ese punto del
-// Sol contra el radio de cada órbita. Nada de geometría ni listas
-// precalculadas: es una división y una resta por cada órbita.
+//PARA LO DE LOS PLANETAS 
+
+// Anillos de órbita, como referencia visual
 fn orbit_ring_hit(
     ray_origin: &Vector3,
     ray_direction: &Vector3,
@@ -414,9 +416,7 @@ fn orbit_ring_hit(
     limite: f32,
 ) -> Option<(f32, Color)> {
 
-    // Rayo casi paralelo al plano orbital: no vale la pena intersectar
-    // (o no hay solución útil, o el "anillo" saldría estirado hasta el
-    // infinito).
+    // Rayo casi paralelo al plano orbital
     if ray_direction.y.abs() < 1e-5 {
         return None;
     }
@@ -432,9 +432,7 @@ fn orbit_ring_hit(
     let radial_distance = ((hit.x - sun_center.x).powi(2) + (hit.z - sun_center.z).powi(2)).sqrt();
 
     for &radius in orbit_radii {
-        // Grosor de la línea proporcional al radio, para que no se vea
-        // desproporcionadamente gruesa la órbita de Mercurio ni
-        // desproporcionadamente fina la de Marte.
+        // Grosor de la línea proporcional al radio
         let thickness = (radius * 0.004).max(0.01);
 
         if (radial_distance - radius).abs() < thickness {
@@ -445,15 +443,10 @@ fn orbit_ring_hit(
     None
 }
 
-/// El raytracer no es más que un for de dos dimensiones que recorre la
-/// pantalla: por cada pixel se lanza un rayo y se pinta el color que
-/// ese rayo trae de vuelta.
-///
-/// Dos mejoras de velocidad respecto a la versión anterior:
-///   - La base de la cámara (forward/right/up) se calcula UNA vez por
-///     frame y se recibe ya hecha, en vez de recalcularla por pixel.
-///   - Los hilos toman grupos pequeños de filas de una cola compartida,
-///     evitando esperar a un único bloque con muchos reflejos.
+//PARA RENDER 
+
+/// El raytracer no es más que un for de dos dimensiones que recorre la pantalla: por cada pixel se lanza un rayo y se pinta el color que ese rayo trae de vuelta.
+// Los hilos toman grupos pequeños de filas de una cola compartida,  evitando esperar a un único bloque con muchos reflejos.
 pub fn render(
     framebuffer: &mut Framebuffer,
     planets: &[Planet],
@@ -477,9 +470,6 @@ pub fn render(
     let threads = *HILOS.get_or_init(|| std::thread::available_parallelism()
         .map(|n| n.get()).unwrap_or(1));
     const FILAS_POR_TRABAJO: usize = 4;
-    // Cada tarea obtiene una porción mutable exclusiva del buffer. El candado
-    // solo protege la entrega de tareas, nunca el trazado ni la escritura.
-    // No hay copias al framebuffer, asignaciones por píxel ni unsafe.
     let trabajos = Mutex::new(framebuffer.pixels_mut()
         .chunks_mut(w * 4 * FILAS_POR_TRABAJO).enumerate());
     std::thread::scope(|scope| {
@@ -507,23 +497,7 @@ pub fn render(
 // ---------------------------------------------------------------------
 // Sistema solar
 // ---------------------------------------------------------------------
-//
-// No se usa la escala real del sistema solar (a escala real el Sol
-// mide ~109 radios terrestres y Neptuno está a 30 AU: o el Sol no cabe
-// en la escena, o los planetas quedan invisibles de tan lejos/
-// pequeños). En vez de eso se usan escalas independientes que sí
-// respetan las PROPORCIONES reales:
-//
-//   - RADIUS_SCALE: "radios terrestres" -> unidades de escena.
-//   - DIST_SCALE:   "AU" -> unidades de escena (radio de la órbita).
-//   - EARTH_ORBIT_SECONDS: cuántos segundos de reloj dura una órbita
-//     completa de la Tierra en la simulación. Los demás planetas
-//     calculan su velocidad angular a partir de su periodo orbital
-//     REAL (en años terrestres) contra esta escala, así que las
-//     proporciones de velocidad entre planetas también son reales:
-//     Mercurio (0.24 años) sigue siendo el más rápido y Marte (1.88
-//     años) el más lento, nada más que el tiempo entero está acelerado
-//     para que se note en pantalla.
+
 
 const RADIUS_SCALE: f32 = 0.12; // 1.0 radio terrestre = 0.12 unidades (cabe sobre la mesa)
 const DIST_SCALE: f32 = 0.85;  // 1.0 AU = 0.85 unidades (Marte a 1.29, cabe dentro de la
@@ -575,10 +549,7 @@ fn crear_sistema_solar() -> Vec<Planet> {
             0.0,
             true, // emissive: no recibe sombreado, se dibuja a color pleno
         ),
-        // No orbita nada (distancia y velocidad orbital en 0). Se le
-        // deja una rotación propia lenta, lista para cuando haya
-        // textura (hoy no se nota: una esfera de color plano se ve
-        // igual gire o no).
+
         OrbitalParameters::new(0.0, 0.0, 0.05),
     );
 
@@ -664,13 +635,13 @@ fn tamano_render(calidad: usize) -> (i32, i32) {
 
 enum Modo {
     Persona, // primera persona: caminar y mirar
-    Orbital, // vista de diorama: rotar y acercar alrededor de la mesa
+    Orbital, // vista exterior: orbitar y acercar alrededor de toda la nave
 }
 
 fn main() {
 
-    let window_width = 1000;
-    let window_height = 800;
+    let window_width = 1200;
+    let window_height = 1000;
 
     let (mut window, raylib_thread) = raylib::init()
         .size(window_width, window_height)
@@ -701,7 +672,6 @@ fn main() {
     puerta.construir(&mut geometria_dinamica);
     puerta_espacio.construir(&mut geometria_dinamica);
     tars.construir(&mut geometria_dinamica);
-    let cantidad_cubos = geometria.len() + geometria_dinamica.len();
     // Registrar emisores antes de mover los cubos a la BVH (mismos índices).
     let light = Iluminacion::new(Luz::new(sun_center,
         Color::new(255,244,214,255),1.7), &geometria);
@@ -718,15 +688,9 @@ fn main() {
         .con_cajas(cabina::obstaculos_cabina(&contorno_nave(), WALL_THICKNESS))
         .con_cajas(laboratorio::obstaculos());
 
-    // Catálogo de materiales de la mesa (metal claro/oscuro, pantalla,
-    // polímero, indicador cian): genera sus texturas una sola vez, al
-    // arrancar. Los tamaños de textura de la pantalla y de la placa de
-    // controles se piden a mesa.rs para que la proporción coincida con
-    // la de la superficie real (celdas cuadradas, sin ovalar anillos).
+
     let materials = crear_materiales(pantalla_texture_size(), consola_texture_size());
 
-    // Posiciona todo antes del primer frame (delta_time = 0.0 solo
-    // aplica la fórmula una vez).
     for planet in planets.iter_mut() {
         planet.update(0.0, sun_center);
     }
@@ -741,26 +705,25 @@ fn main() {
         -12.0_f32.to_radians(),
     );
 
-    // Vista de diorama (tecla C): orbita alrededor del planetario, con
-    // distancia y pitch limitados para quedarse dentro de la nave.
+    // Vista orbital (tecla C): centro y distancia iniciales encuadran la nave
+    // completa, incluido el pasillo trasero.
+    let nave_center = Vector3::new(
+        0.0,
+        ROOM_HEIGHT * 0.5,
+        (ROOM_FRONT_Z + pasillo::FIN_Z) * 0.5,
+    );
     let mut orbital = Camera::new(
-        sun_center,
-        4.0,
+        nave_center,
+        27.5,
         0.0,
         25.0_f32.to_radians(),
     );
 
     let mut calidad = 1usize;
     let mut dinamica = false;
-    let mut mostrar_datos = true;
     let mut ojo_anterior: Option<Vector3> = None;
     let mut direccion_anterior: Option<Vector3> = None;
     let mut ultimo_movimiento = Instant::now();
-    let mut reloj_estadisticas = Instant::now();
-    let mut suma_render = 0.0f64;
-    let mut suma_presentacion = 0.0f64;
-    let mut cuadros = 0u32;
-    let mut hud = format!("BVH: {} cubos | midiendo...\nF1 nativa  F2 75%  F3 50%  F4 dinamica  F5 datos\nESCLUSA: panel trasero para entrar; puerta derecha para salir al espacio", cantidad_cubos);
     if cfg!(debug_assertions) {
         eprintln!("AVISO: compilacion debug. Para medir rendimiento: cargo run --release");
     }
@@ -783,7 +746,6 @@ fn main() {
         if window.is_key_pressed(KeyboardKey::KEY_F2) { calidad = 2; }
         if window.is_key_pressed(KeyboardKey::KEY_F3) { calidad = 3; }
         if window.is_key_pressed(KeyboardKey::KEY_F4) { dinamica = !dinamica; }
-        if window.is_key_pressed(KeyboardKey::KEY_F5) { mostrar_datos = !mostrar_datos; }
 
         // C: cambiar entre primera persona y vista de diorama.
         if window.is_key_pressed(KeyboardKey::KEY_C) {
@@ -872,25 +834,11 @@ fn main() {
         let (rw, rh) = tamano_render(calidad_efectiva);
         framebuffer.resize(rw, rh);
 
-        let inicio_render = Instant::now();
         render(&mut framebuffer, &planets, &cubos, &materials, eye, basis, &light, sun_center, &orbit_radii);
-        suma_render += inicio_render.elapsed().as_secs_f64();
-        let inicio_presentacion = Instant::now();
-        framebuffer.swap_buffers(&mut window, &raylib_thread, if mostrar_datos { &hud } else { "" });
-        suma_presentacion += inicio_presentacion.elapsed().as_secs_f64();
-        cuadros += 1;
-        let transcurrido = reloj_estadisticas.elapsed().as_secs_f64();
-        if transcurrido >= 0.75 {
-            hud = format!("{:.1} FPS | traza {:.1} ms | presenta {:.1} ms | {}x{} | {} cubos | {}\nF1 nativa  F2 75%  F3 50%  F4 auto:{}  F5 ocultar\nESCLUSA: panel trasero para entrar; puerta derecha para salir al espacio",
-                cuadros as f64 / transcurrido,
-                suma_render * 1000.0 / cuadros as f64,
-                suma_presentacion * 1000.0 / cuadros as f64, rw, rh, cantidad_cubos,
-                if cfg!(debug_assertions) { "DEBUG" } else { "RELEASE" },
-                if dinamica { "si" } else { "no" });
-            suma_render = 0.0;
-            suma_presentacion = 0.0;
-            cuadros = 0;
-            reloj_estadisticas = Instant::now();
-        }
+        let controles = match modo {
+            Modo::Persona => "PERSONA | WASD mover  Flechas mirar  TAB cursor  C camara orbital",
+            Modo::Orbital => "ORBITAL | Flechas orbitar  W/S desplazar  Q/E o rueda zoom  C volver",
+        };
+        framebuffer.swap_buffers(&mut window, &raylib_thread, controles);
     }
 }

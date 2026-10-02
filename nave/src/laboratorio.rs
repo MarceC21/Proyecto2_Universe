@@ -1,5 +1,4 @@
-// Cabina de experimentos independiente: geometría, visor y futura interacción.
-// Sin dependencias nuevas. Geometría estática construida una sola vez.
+// Cabina de experimentos independiente
 use std::sync::OnceLock;
 use raylib::prelude::*;
 use crate::colisiones::CajaOrientada;
@@ -59,8 +58,8 @@ pub fn construir(cubos: &mut Vec<Cubo>) {
         bloque(cubos,u,2.28,0.86,0.16,2.16,1.66,REFUERZO_NAVE);
         bloque(cubos,u,2.35,1.73,0.06,1.80,0.04,INDICADOR);
     }
-    // Carriles y travesanos del visor. El bloque de vidrio se intersecta
-    // aparte de la BVH opaca, para transmitir luz y refractar los rayos.
+    // Carriles y travesanos del visor
+    //  El bloque de vidrio se intersecta aparte de la BVH opaca, para transmitir luz y refractar los rayos.
     bloque(cubos,0.0,1.30,FONDO_VISOR,5.24,0.12,0.10,REFUERZO_NAVE);
     bloque(cubos,0.0,3.39,FONDO_VISOR,5.24,0.06,0.10,REFUERZO_NAVE);
     bloque(cubos,0.0,1.40,FONDO_VISOR+0.05,0.65,0.07,0.10,REFUERZO_NAVE);
@@ -99,8 +98,7 @@ pub fn obstaculos() -> Vec<CajaOrientada> {
 #[allow(dead_code)]
 pub fn posicion_boton() -> Vector3 { punto(2.30,1.99,1.87) }
 
-// Volumen cerrado: frente, dorso y cantos del vidrio. La cara frontal
-// conserva la posicion anterior; el grosor crece hacia el laboratorio.
+// Para el visor del vidiro
 fn vidrio() -> &'static Cubo {
     static VIDRIO: OnceLock<Cubo> = OnceLock::new();
     VIDRIO.get_or_init(|| {
@@ -114,7 +112,6 @@ fn vidrio() -> &'static Cubo {
 }
 
 // Cubo orienta sus normales contra el rayo para sombrear solidos opacos.
-// Para Snell necesitamos la normal EXTERIOR, incluso al salir del vidrio.
 pub fn intersectar_visor(origen: &Vector3, direccion: &Vector3) -> Intersect {
     let mut impacto = vidrio().ray_intersect(origen, direccion);
     if !impacto.is_intersecting { return impacto; }

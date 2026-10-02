@@ -1,12 +1,15 @@
 // Iluminación local sin dependencias: emisores obtenidos de la geometría una vez.
-// Rejilla espacial para consultar solo luces cercanas; hasta cuatro por impacto.
+// Rejilla espacial para consultar solo luces cercanas, hasta cuatro por impacto.
 
 use raylib::prelude::*;
 use crate::cubo::Cubo;
 use crate::material::*;
 
+// La luz que esta siempre presente
 pub const AMBIENTE: f32 = 1.22;
-pub const MAX_LUCES_LOCALES: usize = 4;
+
+// Máximo de luces locales que se pueden usar en un impacto
+pub const MAX_LUCES_LOCALES: usize = 3;
 const CELDA: f32 = 3.0;
 
 pub struct Luz { pub position: Vector3, pub color: Color, pub intensity: f32 }

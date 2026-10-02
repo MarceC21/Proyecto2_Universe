@@ -6,13 +6,7 @@
 //
 //      x = u * ancho - 0.5        y = v * alto - 0.5
 //
-// Se interpola bilinealmente entre los 4 texels vecinos (menos
-// "escalones" al acercarse que con el vecino más cercano), y las
-// coordenadas se envuelven (u = 0.3 y u = 1.3 dan lo mismo), lo que
-// permite repetir la textura en superficies grandes.
-//
-// Todas las texturas se generan UNA vez al arrancar (ver material.rs):
-// durante el render solo se consulta `sample`.
+// Todas las texturas se generan UNA vez al arrancar 
 
 use raylib::prelude::*;
 

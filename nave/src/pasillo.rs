@@ -1,3 +1,6 @@
+// EXtra para añadir los motores de la nave y para lograr salir 
+
+
 use raylib::prelude::*;
 use crate::colisiones::Obstaculo;
 use crate::cubo::Cubo;

@@ -1,5 +1,6 @@
-// División de cabina hasta el techo con entrada abierta. Solo geometría estática, sin dependencias nuevas.
-// escena.rs decide si construye este conjunto y registra sus colisiones.
+// División de cabina hasta el techo con entrada abierta. 
+// Solo geometría estática
+
 use raylib::prelude::*;
 use crate::colisiones::Obstaculo;
 use crate::cubo::Cubo;
@@ -8,8 +9,8 @@ use crate::material::{CONTROLES_COMANDO, INDICADOR, PISO_NAVE, PARED_NAVE, REFUE
 // Cambiar Z mueve juntos estructura, gabinetes y colisiones.
 pub const Z: f32 = -7.60;
 const POSTE_X: f32 = 3.70;
-// Reserva sobre la pared lateral derecha, del lado de la mesa.
-// El tabique ocupa la reserva anterior: se conserva un hueco libre delante.
+
+// Reserva sobre la pared lateral derecha, del lado de la mesa
 pub fn espacio_tars() -> Obstaculo {
     Obstaculo { min_x:7.75, max_x:9.40, min_z:Z+1.10, max_z:Z+3.00 }
 }

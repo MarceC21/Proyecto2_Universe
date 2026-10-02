@@ -1,20 +1,17 @@
 // Materiales: textura + parámetros de respuesta a la luz.
 //
-// Modelo de color de una superficie (Blinn-Phong + reflexión + emisión):
-//
+// Modelo de color de una superficie 
 //   base   = textura(u, v) * albedo                (color propio)
 //   local  = AMBIENTE*ka*base                      (ambiente tenue)
 //          + kd*base*luz*max(N.L, 0)               (difusa de Lambert)
 //          + ks*luz*max(N.H, 0)^shininess          (especular; H = normalizado(L+V))
 //   color  = local*(1 - reflectividad) + reflejo*reflectividad + base*emision
 //
-// `reflejo` es el color que devuelve OTRO rayo lanzado en la dirección
-// reflejada R = D - 2(D.N)N (esto es reflexión trazada, distinta del
-// brillo especular, que solo es un punto de luz).
-//
-// Los vidrios de laboratorio y cabina usan transparencia e ior para trazar rayos
-// refractados en sus dos superficies, ademas de la reflexion de Fresnel.
-//
+// `reflejo`: es el color que devuelve OTRO rayo lanzado en la dirección
+// reflejada R = D - 2(D.N)N 
+
+// Los vidrios de laboratorio y cabina usan transparencia para trazar rayos refractados en sus dos superficies, ademas de la reflexion de Fresnel.
+
 // Las texturas se generan una sola vez, aquí, al arrancar.
 
 use raylib::prelude::*;
@@ -27,7 +24,8 @@ pub const METAL_OSCURO: usize = 1;
 pub const PANTALLA: usize = 2;
 pub const POLIMERO: usize = 3;
 pub const INDICADOR: usize = 4;
-// Materiales exclusivos de cabina; los cinco anteriores se conservan.
+
+// Materiales para cabina, consola, tars y laboratorio
 pub const RADAR_CABINA: usize = 5;
 pub const BOTONERA_CABINA: usize = 6;
 pub const SISTEMAS_CABINA: usize = 7;
@@ -65,8 +63,6 @@ pub struct Material {
     pub emision: f32,        // 0..1+: cuánto color propio se suma sin depender de la luz
 }
 
-// `pantalla_size` = tamaño en texels de la textura de la pantalla; debe
-// tener la misma proporción que la pantalla real (lo calcula mesa.rs).
 pub fn crear_materiales(pantalla_size: (usize, usize), consola_size: (usize, usize)) -> Vec<Material> {
     vec![
         // Marco y tablero: metal gris claro, brillo controlado y algo de

@@ -1,3 +1,5 @@
+// Este es para la compuerta que se abre y cierra 
+
 use raylib::prelude::*;
 use crate::colisiones::Obstaculo;
 use crate::cubo::Cubo;

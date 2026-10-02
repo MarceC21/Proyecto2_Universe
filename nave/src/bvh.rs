@@ -1,4 +1,5 @@
-// Jerarquía de cajas envolventes para geometría estática. Sin dependencias nuevas.
+// Jerarquía de cajas envolventes para geometría estática
+
 // La nave se construye una vez. El grupo móvil tiene su propia BVH pequeña.
 use raylib::prelude::*;
 use crate::cubo::Cubo;
@@ -72,15 +73,18 @@ impl Bvh {
         id
     }
 
-    fn entrada(&self, id: usize, o: &[f32; 3], d: &[f32; 3], limite: f32) -> Option<f32> {
+    // Distancia de entrada al nodo, o None si el rayo no lo toca antes de `limite`.
+    // `inv` = 1/direccion se calcula UNA vez por rayo, no una division por nodo.
+    fn entrada(&self, id: usize, o: &[f32; 3], d: &[f32; 3], inv: &[f32; 3],
+               limite: f32) -> Option<f32> {
         let nodo = &self.nodos[id];
         let (mut cerca, mut lejos) = (0.0f32, limite);
         for k in 0..3 {
             if d[k] == 0.0 {
                 if o[k] < nodo.min[k] || o[k] > nodo.max[k] { return None; }
             } else {
-                let a = (nodo.min[k] - o[k]) / d[k];
-                let b = (nodo.max[k] - o[k]) / d[k];
+                let a = (nodo.min[k] - o[k]) * inv[k];
+                let b = (nodo.max[k] - o[k]) * inv[k];
                 cerca = cerca.max(a.min(b));
                 lejos = lejos.min(a.max(b));
                 if cerca > lejos { return None; }
@@ -96,54 +100,67 @@ impl Bvh {
         }
         if self.nodos.is_empty() { return hit; }
         let mut mejor = if hit.is_intersecting { hit.distance } else { limite };
-        let mut indice = usize::MAX;
-        self.visitar(0, origen, direccion, &componentes(origen), &componentes(direccion),
-            &mut mejor, &mut indice, &mut hit);
+        let (o, d) = (componentes(origen), componentes(direccion));
+        let inv = d.map(|v| 1.0 / v);
+        if let Some(t) = self.entrada(0, &o, &d, &inv, mejor) {
+            let mut indice = usize::MAX;
+            self.visitar(0, t, origen, direccion, &o, &d, &inv,
+                &mut mejor, &mut indice, &mut hit);
+        }
         hit
     }
 
-    // Cualquier obstáculo basta para la sombra; no buscamos el más cercano.
-    // omitir identifica el cubo emisor en el orden original de construcción.
+    // Cualquier obstaculo basta para la sombra; no buscamos el mas cercano.
+    // omitir identifica el cubo emisor en el orden original de construccion.
     pub fn ocluido(&self, origen: &Vector3, direccion: &Vector3,
                   limite: f32, omitir: Option<usize>) -> bool {
         if limite <= 0.0 { return false; }
-        // omitir es un índice de emisor ESTÁTICO; no se aplica al grupo móvil.
+        // omitir es un indice de emisor ESTATICO; no se aplica al grupo movil.
         if self.dinamicos.as_ref().map_or(false, |d| d.ocluido(origen, direccion, limite, None)) {
             return true;
         }
         if self.nodos.is_empty() { return false; }
-        self.visibilidad(0,origen,direccion,&componentes(origen),&componentes(direccion),limite,omitir)
+        let (o, d) = (componentes(origen), componentes(direccion));
+        let inv = d.map(|v| 1.0 / v);
+        if self.entrada(0, &o, &d, &inv, limite).is_none() { return false; }
+        self.visibilidad(0, origen, direccion, &o, &d, &inv, limite, omitir)
     }
-    fn visibilidad(&self,id:usize,origen:&Vector3,direccion:&Vector3,
-                   o:&[f32;3],d:&[f32;3],limite:f32,omitir:Option<usize>) -> bool {
-        if self.entrada(id,o,d,limite).is_none() { return false; }
-        let nodo=&self.nodos[id];
-        if let Some((a,b))=nodo.hijos {
-            let orden=match (self.entrada(a,o,d,limite),self.entrada(b,o,d,limite)) {
-                (Some(x),Some(y)) if y<x => [b,a], _ => [a,b],
-            };
-            self.visibilidad(orden[0],origen,direccion,o,d,limite,omitir) ||
-            self.visibilidad(orden[1],origen,direccion,o,d,limite,omitir)
+
+    // El llamador ya comprobo que el rayo toca este nodo: no se repite la prueba.
+    #[allow(clippy::too_many_arguments)]
+    fn visibilidad(&self, id: usize, origen: &Vector3, direccion: &Vector3,
+                   o: &[f32; 3], d: &[f32; 3], inv: &[f32; 3],
+                   limite: f32, omitir: Option<usize>) -> bool {
+        let nodo = &self.nodos[id];
+        if let Some((a, b)) = nodo.hijos {
+            let (ta, tb) = (self.entrada(a, o, d, inv, limite), self.entrada(b, o, d, inv, limite));
+            let mut hijos = [(a, ta), (b, tb)];
+            if let (Some(x), Some(y)) = (ta, tb) { if y < x { hijos.swap(0, 1); } }
+            hijos.into_iter().any(|(h, t)| t.is_some()
+                && self.visibilidad(h, origen, direccion, o, d, inv, limite, omitir))
         } else {
             self.indices[nodo.inicio..nodo.fin].iter().any(|&i|
-                Some(i)!=omitir && self.cubos[i].ocluye(origen,direccion,limite))
+                Some(i) != omitir && self.cubos[i].ocluye(origen, direccion, limite))
         }
     }
 
-    fn visitar(&self, id: usize, origen: &Vector3, direccion: &Vector3,
-        o: &[f32; 3], d: &[f32; 3], mejor: &mut f32, indice: &mut usize, hit: &mut Intersect,
+    // `t_entrada` es la distancia de entrada al nodo, ya calculada por el padre.
+    // Si otro nodo mas cercano ya fijo `mejor` por debajo de ella, se descarta.
+    #[allow(clippy::too_many_arguments)]
+    fn visitar(&self, id: usize, t_entrada: f32, origen: &Vector3, direccion: &Vector3,
+        o: &[f32; 3], d: &[f32; 3], inv: &[f32; 3],
+        mejor: &mut f32, indice: &mut usize, hit: &mut Intersect,
     ) {
-        if self.entrada(id, o, d, *mejor).is_none() { return; }
+        if t_entrada > *mejor { return; }
         let nodo = &self.nodos[id];
         if let Some((a, b)) = nodo.hijos {
-            let ta = self.entrada(a, o, d, *mejor);
-            let tb = self.entrada(b, o, d, *mejor);
-            let orden = match (ta, tb) {
-                (Some(x), Some(y)) if y < x => [b, a],
-                _ => [a, b],
-            };
-            for hijo in orden {
-                self.visitar(hijo, origen, direccion, o, d, mejor, indice, hit);
+            let (ta, tb) = (self.entrada(a, o, d, inv, *mejor), self.entrada(b, o, d, inv, *mejor));
+            let mut hijos = [(a, ta), (b, tb)];
+            if let (Some(x), Some(y)) = (ta, tb) { if y < x { hijos.swap(0, 1); } }
+            for (hijo, t) in hijos {
+                if let Some(t) = t {
+                    self.visitar(hijo, t, origen, direccion, o, d, inv, mejor, indice, hit);
+                }
             }
         } else {
             for &i in &self.indices[nodo.inicio..nodo.fin] {

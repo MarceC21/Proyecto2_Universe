@@ -39,7 +39,7 @@ impl Framebuffer {
         self.height = height;
         self.pixels.resize(width as usize * height as usize * 4, 0);
         self.texture = None;
-        // El siguiente render escribe todos los bytes, incluido el canal alfa.
+        
     }
 
     pub fn swap_buffers(&mut self, window: &mut RaylibHandle, thread: &RaylibThread, hud: &str) {

@@ -1,57 +1,35 @@
-// Cámara orbital: controles + suavizado, separados del resto del
-// motor (main.rs ya no sabe nada de qué tecla hace qué).
-//
-// Se separan tres responsabilidades que antes vivían mezcladas en el
-// loop principal:
-//   - handle_input(): qué tecla/mouse mueve qué. Es lo único que sabe
-//     de raylib::RaylibHandle.
-//   - update(): el suavizado. A qué velocidad se alcanza el objetivo.
-//   - basis()/basis_change(): la geometría de la cámara (adónde
-//     apunta cada rayo).
-//
-// El input NUNCA toca yaw/pitch/distance/center directamente: solo
-// mueve los valores "target_*". update() es quien, cada frame, acerca
-// los valores actuales a esos objetivos. Esto es lo que resuelve los
-// "problemas de fluidez" que había: antes cada frame sumaba un paso
-// fijo (por ejemplo ORBIT_SPEED tal cual), así que a 30 FPS la cámara
-// giraba la mitad de rápido que a 60 FPS, y cualquier variación de
-// framerate se sentía como un tirón. Acá el input avanza el objetivo
-// ya escalado por delta_time, y el suavizado exponencial de update()
-// también depende de delta_time, así que el resultado es el mismo
-// recorrido (en segundos reales) sin importar el framerate, y además
-// queda con una desaceleración suave en vez de parar en seco.
+// Cámara orbital: controles + suavizado
 use raylib::prelude::*;
 
 use crate::colisiones::{Colisiones, Obstaculo};
 
-const ORBIT_SPEED: f32 = 1.2; // radianes/segundo
-const ZOOM_KEY_SPEED: f32 = 10.0; // unidades/segundo (teclas Q/E)
-const ZOOM_WHEEL_SPEED: f32 = 2.5; // unidades por "muesca" de la rueda del mouse
+const ORBIT_SPEED: f32 = 0.65; // radianes/segundo
+const TRAVEL_SPEED: f32 = 3.5; // unidades/segundo (teclas W/S)
+const ZOOM_KEY_SPEED: f32 = 5.0; // unidades/segundo (teclas Q/E)
+const ZOOM_WHEEL_SPEED: f32 = 1.2; // unidades por "muesca" de la rueda del mouse
 
-// Límites de la cámara orbital: la nave es cerrada, así que el ojo
-// debe quedar dentro de la habitación (5 de mitad de fondo, 5 de alto).
+// El zoom permite alternar entre el detalle de la mesa y una vista completa
+// de la nave. El pitch evita que la órbita se invierta en los polos.
 const MIN_DISTANCE: f32 = 1.0;
-const MAX_DISTANCE: f32 = 4.5;
-const MIN_PITCH_DEG: f32 = -5.0; // no bajar del tablero de la mesa
-const MAX_PITCH_DEG: f32 = 45.0; // no atravesar el techo
+const MAX_DISTANCE: f32 = 35.0;
+const MIN_PITCH_DEG: f32 = -80.0;
+const MAX_PITCH_DEG: f32 = 80.0;
 
-// Qué tan rápido "alcanza" la cámara a su objetivo (suavizado
-// exponencial, no es una unidad física exacta). Más alto = más
-// inmediato; más bajo = más lento y cinematográfico.
-const SMOOTHING_RATE: f32 = 9.0;
+// Qué tan rápido "alcanza" la cámara a su objetivo (suavizado  exponencial, no es una unidad física exacta). 
+// Más alto = más inmediato , más bajo = más lento y cinematográfico.
+const SMOOTHING_RATE: f32 = 5.0;
 
 pub struct Camera {
     pub eye: Vector3,
     pub up: Vector3,
 
-    // Valores actuales: lo que se usa para renderizar este frame.
+    // Valores actuales: lo que se usa para renderizar este frame
     pub center: Vector3,
     pub yaw: f32,
     pub pitch: f32,
     pub distance: f32,
 
-    // Valores objetivo: hacia dónde se dirige la cámara. Solo
-    // handle_input() los toca.
+    // Valores objetivo: hacia dónde se dirige la cámara. Solo handle_input() los toca.
     target_center: Vector3,
     target_yaw: f32,
     target_pitch: f32,
@@ -76,8 +54,7 @@ impl Camera {
         camera
     }
 
-    // Recalcula "eye" a partir de center/yaw/pitch/distance
-    // (coordenadas esféricas alrededor del centro).
+    // Recalcula "eye" 
     fn update_eye(&mut self) {
         self.eye = Vector3::new(
             self.center.x + self.distance * self.pitch.cos() * self.yaw.sin(),
@@ -87,8 +64,8 @@ impl Camera {
     }
 
     // Vectores forward/right/up de la cámara, a partir de eye y
-    // center. Se usan tanto para mover "center" (travel) como para
-    // transformar cada rayo de espacio de cámara a espacio del mundo.
+    // center. 
+    // Se usan tanto para mover "center" (travel) como para transformar cada rayo de espacio de cámara a espacio del mundo.
     pub fn basis(&self) -> (Vector3, Vector3, Vector3) {
         let forward = (self.center - self.eye).normalize();
         let right = forward.cross(self.up).normalize();
@@ -97,12 +74,10 @@ impl Camera {
     }
 
 
-    // --- Controles: solo tocan los valores "target_*" ---
-
     pub fn orbit(&mut self, delta_yaw: f32, delta_pitch: f32) {
         self.target_yaw += delta_yaw;
 
-        // Se limita el pitch para no atravesar techo ni mesa.
+        // Se limita el pitch para evitar singularidades en los polos.
         self.target_pitch = (self.target_pitch + delta_pitch)
             .clamp(MIN_PITCH_DEG.to_radians(), MAX_PITCH_DEG.to_radians());
     }
@@ -111,19 +86,13 @@ impl Camera {
         self.target_distance = (self.target_distance + delta).clamp(MIN_DISTANCE, MAX_DISTANCE);
     }
 
-    // Mueve el punto que la cámara orbita ("center"), usando la
-    // orientación actual como referencia. Así uno "viaja" de un
-    // planeta a otro sin dejar de poder orbitarlo.
-    #[allow(dead_code)]
+    // Mueve el punto que la cámara orbita ("center"), usando la orientación actual como referencia.
     pub fn travel(&mut self, forward_amount: f32, right_amount: f32) {
         let (forward, right, _up) = self.basis();
         self.target_center = self.target_center + forward * forward_amount + right * right_amount;
     }
 
-    // Lee teclado/mouse y traduce el input a movimientos del OBJETIVO
-    // de la cámara. Todo escalado por delta_time, salvo la rueda del
-    // mouse (que ya es un evento discreto: cada "muesca" es un solo
-    // input, no algo que dependa de cuánto duró el frame).
+
     pub fn handle_input(&mut self, window: &RaylibHandle, delta_time: f32) {
         if window.is_key_down(KeyboardKey::KEY_LEFT) {
             self.orbit(-ORBIT_SPEED * delta_time, 0.0);
@@ -149,14 +118,18 @@ impl Camera {
             self.zoom(ZOOM_KEY_SPEED * delta_time);
         }
 
-        // (W/A/S/D ya no desplazan el centro orbital: en la nave
-        // cerrada ese movimiento es de la cámara en primera persona.)
+        let mut forward = 0.0;
+        if window.is_key_down(KeyboardKey::KEY_W) {
+            forward += TRAVEL_SPEED * delta_time;
+        }
+        if window.is_key_down(KeyboardKey::KEY_S) {
+            forward -= TRAVEL_SPEED * delta_time;
+        }
+        if forward != 0.0 {
+            self.travel(forward, 0.0);
+        }
     }
 
-    // Acerca los valores actuales a los "target_*", a una velocidad
-    // independiente del framerate (suavizado exponencial: cada frame
-    // se recorre una FRACCIÓN de lo que falta, no un paso fijo). Se
-    // llama una vez por frame, después de handle_input().
     pub fn update(&mut self, delta_time: f32) {
         let t = 1.0 - (-SMOOTHING_RATE * delta_time).exp();
 
@@ -170,24 +143,7 @@ impl Camera {
 }
 
 
-// ---------------------------------------------------------------------
 // Cámara en primera persona (estilo Minecraft)
-// ---------------------------------------------------------------------
-//
-// El jugador tiene una posición (x, z) sobre el suelo y los ojos a una
-// altura fija. Dos ángulos definen hacia dónde mira:
-//   yaw   = giro horizontal (0 = mirando hacia -Z, crece hacia la derecha)
-//   pitch = inclinación vertical (arriba/abajo)
-//
-//   forward = ( sin(yaw)*cos(pitch),  sin(pitch), -cos(yaw)*cos(pitch) )
-//   right   = ( cos(yaw), 0, sin(yaw) )        (siempre horizontal)
-//   up      = right x forward
-//
-// El movimiento usa SOLO el yaw (dirección horizontal):
-//   adelante = ( sin(yaw), 0, -cos(yaw) )
-// así mirar hacia arriba o abajo no hace que uno vuele ni se hunda, y
-// W siempre avanza "hacia donde miras" en el plano del suelo, sin
-// importar por dónde se haya empezado.
 const MOUSE_SENSITIVITY: f32 = 0.0025; // radianes por píxel
 const LOOK_KEY_SPEED: f32 = 1.8; // radianes/segundo con las flechas
 const WALK_SPEED: f32 = 3.5; // unidades/segundo
@@ -244,8 +200,7 @@ impl CamaraPersona {
         // --- Mirar: ratón (si está capturado) y flechas ---
         if mouse_look {
             let delta = window.get_mouse_delta();
-            // Se descartan saltos enormes (el primer frame tras capturar
-            // el cursor puede traer un delta espurio).
+            // Se descartan saltos enormes
             if delta.x.abs() < 200.0 && delta.y.abs() < 200.0 {
                 self.yaw += delta.x * MOUSE_SENSITIVITY;
                 self.pitch -= delta.y * MOUSE_SENSITIVITY;
@@ -281,16 +236,13 @@ impl CamaraPersona {
 
         let mut wish_x = fx * move_forward + rx * move_right;
         let mut wish_z = fz * move_forward + rz * move_right;
-        // En diagonal (W+D) la suma mide 1.41: se normaliza para no
-        // ir más rápido en diagonal.
+        // En diagonal (W+D) la suma mide 1.41: se normaliza para no ir más rápido en diagonal.
         let len = (wish_x * wish_x + wish_z * wish_z).sqrt();
         if len > 0.0 {
             wish_x /= len;
             wish_z /= len;
         }
 
-        // Suavizado exponencial hacia la velocidad deseada (mismo
-        // criterio que la cámara orbital: depende de delta_time).
         let t = 1.0 - (-ACCELERATION * delta_time).exp();
         self.velocity_x += (wish_x * WALK_SPEED - self.velocity_x) * t;
         self.velocity_z += (wish_z * WALK_SPEED - self.velocity_z) * t;

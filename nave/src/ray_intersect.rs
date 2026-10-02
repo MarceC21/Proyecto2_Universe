@@ -27,12 +27,7 @@ impl Ray {
     }
 }
 
-// Resultado de probar la intersección entre un rayo y un objeto
-//
-// Además de dónde y con qué normal se chocó, ahora también se carga el
-// material del objeto (albedo + coeficientes) porque quien calcula la
-// iluminación (cast_ray, en main.rs) necesita saber CÓMO responde esa
-// superficie a la luz, no solo su color plano.
+// Intersección de un rayo con un objeto: punto, normal, color y parámetros de iluminación.
 #[derive(Debug, Clone, Copy)]
 pub struct Intersect {
     pub distance: f32,

@@ -1,4 +1,5 @@
-// La esfera
+// Teoría detrás de la esfera
+
 // Una esfera de centro C y radio r es el conjunto de puntos que están
 // exactamente a distancia r del centro: ||P - C||^2 = r^2
 //
@@ -18,8 +19,7 @@ pub struct Esfera {
     pub center: Vector3,
     pub radius: f32,
 
-    // Material: lo que el sombreador (main.rs) consulta cuando un rayo
-    // golpea esta esfera.
+    // Material: lo que el sombreador consulta cuando un rayo golpea esta esfera.
     pub albedo: Color, // color propio de la superficie
     pub ka: f32,       // coeficiente ambiental
     pub kd: f32,       // coeficiente difuso
@@ -55,8 +55,7 @@ impl RayIntersect for Esfera {
         let b = 2.0 * ray_direction.dot(oc);
         let c = oc.dot(oc) - self.radius * self.radius;
 
-        // El discriminante dice, por sí solo, la relación geométrica
-        // entre el rayo y la esfera.
+        // El discriminante dice, por sí solo, la relación geométrica entre el rayo y la esfera.
         let discriminant = b * b - 4.0 * a * c;
 
         // Delta < 0: no hay solución real, el rayo pasa de largo.
@@ -69,8 +68,7 @@ impl RayIntersect for Esfera {
         let t1 = (-b - sqrt_discriminant) / (2.0 * a);
         let t2 = (-b + sqrt_discriminant) / (2.0 * a);
 
-        // De las dos raíces se toma la menor que sea positiva: es la
-        // cara de la esfera que mira hacia la cámara.
+        // De las dos raíces se toma la menor que sea positiva: es la cara de la esfera que mira hacia la cámara.
         let t = if t1 > 0.0001 {
             t1
         } else if t2 > 0.0001 {

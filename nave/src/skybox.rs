@@ -1,21 +1,7 @@
 // Fondo estelar procedural.
 //
-// Tres formas típicas de resolver esto: un skybox (textura), una
-// esfera invertida (geometría), o una lista de estrellas generada una
-// sola vez. Acá se usa una cuarta, más barata que las tres: el color
-// del cielo se calcula con una función DETERMINÍSTICA de la dirección
-// del rayo. Se cuantiza esa dirección en una rejilla angular fija
-// sobre la esfera celeste (una especie de "cuadrícula de casillas del
-// cielo") y se hashea cada celda a un número; si ese número supera un
-// umbral, esa celda "tiene estrella".
-//
-// Como la función siempre da el mismo resultado para la misma
-// dirección del mundo, el cielo nunca se reconstruye ni se recalcula
-// de forma distinta entre frames — es, en efecto, un skybox fijo —
-// solo que no hace falta generarlo antes de arrancar ni guardar nada
-// en memoria (ni una lista de estrellas, ni una textura). Es sencillo
-// de sostener sin castigar el rendimiento: por cada pixel de fondo son
-// un par de senos/cosenos y un hash, nada de recorrer una lista.
+// Este se calcula para cada rayo que no choca con la nave
+
 use raylib::prelude::*;
 
 const STAR_DENSITY: f32 = 0.0025; // fracción de celdas del cielo con estrella
@@ -35,10 +21,6 @@ fn hash2(x: f32, y: f32) -> f32 {
 pub fn sky_color(direction: &Vector3) -> Color {
     let space = Color::new(4, 4, 12, 255);
 
-    // Coordenadas esféricas de la dirección del rayo EN EL MUNDO (ya
-    // pasó por camera.basis_change en main.rs), no en espacio de
-    // cámara: por eso las estrellas quedan fijas en el cielo cuando la
-    // cámara orbita, en vez de girar pegadas a la pantalla.
     let azimuth = direction.z.atan2(direction.x);
     let elevation = direction.y.clamp(-1.0, 1.0).asin();
 

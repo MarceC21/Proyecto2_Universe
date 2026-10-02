@@ -1,17 +1,11 @@
-// Escena: dimensiones y construcción de la habitación (la mesa vive en mesa.rs).
-//
-// Convención de ejes (unidades de escena, Y hacia arriba):
-//   +X = derecha (zona de TARS)      -X = izquierda (paneles, depósitos)
-//   -Z = frente (cabina, ventanal)   +Z = atrás (compuerta de Adrian)
-//   Y = 0 es la superficie del suelo.
-// El origen (0, 0, 0) se mantiene bajo el centro de la mesa.
-//
-// Cada bloque se coloca por centro y tamaño una sola vez, al construir
-// la escena. Las dimensiones se ajustan en las constantes de abajo.
+// Escena: dimensiones y construcción de la habitación
+
+// Cada bloque se coloca por centro y tamaño una sola vez, al construir la escena. 
+// Las dimensiones se ajustan en las constantes de abajo.
 
 use raylib::prelude::*;
 
-// Módulo privado de escena: arco.rs va en src/, sin editar main.rs.
+// Módulo privado de escena
 #[path = "arco.rs"]
 mod arco;
 #[path = "exterior.rs"]
@@ -25,16 +19,13 @@ use crate::mesa::{construir_mesa, obstaculos_mesa as mesa_obstaculos};
 pub use crate::mesa::planetario_origen;
 
 pub const ROOM_HALF_X: f32 = 10.0;
-pub const ROOM_FRONT_Z: f32 = -15.0; // espacio delantero para la futura cabina
+pub const ROOM_FRONT_Z: f32 = -15.0;
 pub const ROOM_BACK_Z: f32 = 8.0;
 pub const ROOM_HEIGHT: f32 = 7.0;
 pub const WALL_THICKNESS: f32 = 0.3;
 pub const FLOOR_THICKNESS: f32 = 0.3;
 
-// Estructura desplazada 7 unidades hacia -Z respecto a la mesa.
-// Se conservan los recortes y las dimensiones de los vanos existentes.
-// Diagonales: (±4.2, -15) a (±10, -13.2),
-// y (±10, -3.8) a (±4.2, 8).
+
 const FRONT_INSET_X: f32 = 4.2;
 const FRONT_DIAGONAL_Z: f32 = ROOM_FRONT_Z + 1.8;
 const BACK_DIAGONAL_Z: f32 = ROOM_BACK_Z - 11.8;
@@ -49,10 +40,9 @@ pub const PLAYER_START_Z: f32 = 3.2;
 #[derive(Clone, Copy, PartialEq)]
 pub enum Pared {Frente, Atras, Izquierda, Derecha,}
 
-// Compatibilidad con mesa.rs: el tipo pertenece al módulo de colisiones.
+// Compatibilidad con mesa.rs, el tipo pertenece al módulo de colisiones.
 pub use crate::colisiones::Obstaculo;
 
-// Contorno convexo en orden antihorario en el plano XZ.
 // Paredes y colisiones usan exactamente estos mismos ocho vértices.
 pub fn contorno_nave() -> [(f32, f32); 8] {
     [
@@ -93,7 +83,7 @@ pub fn obstaculos() -> Vec<Obstaculo> {
     }
     lista.extend(crate::pasillo::obstaculos());
     lista.extend(exterior::obstaculos());
-    // Huella de la consola derecha; el espacio futuro de TARS queda transitable.
+    
     for (u, ancho, fondo, profundidad) in huellas_comando() {
         // Divisiones cortas para aproximar la huella diagonal sin bloquear
         // con una sola AABB el pasillo que hay frente a los paneles.
@@ -204,7 +194,7 @@ fn pared_con_ventana(
     bloque_en_pared(cubos, a, b, center, opening_width,
                      (window_top + h) * 0.5, h - window_top, PARED_NAVE);
 
-    // Pilares de los lados del vano; el espacio entre ellos queda abierto.
+    // Pilares de los lados del vano, el espacio entre ellos queda abierto.
     let post_center = opening_width * 0.5 - post * 0.5;
     for along in [center - post_center, center + post_center] {
         bloque_en_pared(cubos, a, b, along, post,
@@ -230,7 +220,7 @@ pub fn crear_habitacion() -> Vec<Cubo> {
     let vertices = contorno_nave();
     let punto = |i: usize| Vector3::new(vertices[i].0, 0.0, vertices[i].1);
 
-    // Piso plano; el techo anular se construye en techo.rs.
+    // Piso plano
     cubos.push(Cubo::new(
         Vector3::new(0.0, -floor * 0.5, (ROOM_FRONT_Z + ROOM_BACK_Z) * 0.5),
         Vector3::new(2.0 * (hx + t), floor, ROOM_BACK_Z - ROOM_FRONT_Z + 2.0 * t),
@@ -276,8 +266,7 @@ pub fn crear_habitacion() -> Vec<Cubo> {
 }
 
 // Pared derecha de la MESA: diagonal entre vértices 3 y 4.
-// Todas las medidas siguientes son locales: u recorre la pared y fondo
-// se mide hacia el interior desde su cara visible.
+// Todas las medidas siguientes son locales: u recorre la pared y fondo se mide hacia el interior desde su cara visible.
 fn marco_comando() -> (f32, f32, f32, f32, f32) {
     let vertices = contorno_nave();
     let (ax, az) = vertices[3];
@@ -371,7 +360,7 @@ fn construir_comando_derecho(cubos: &mut Vec<Cubo>) {
     }
 }
 
-// El marco queda estático; las hojas deslizantes viven en compuerta.rs.
+// El marco queda estático
 fn construir_puerta_trasera(cubos: &mut Vec<Cubo>) {
     let z = ROOM_BACK_Z;
     let ancho = 3.80;
@@ -399,7 +388,6 @@ fn construir_puerta_trasera(cubos: &mut Vec<Cubo>) {
 fn construir_servicios_traseros(cubos: &mut Vec<Cubo>) {
     let (_, _, tx, tz, _) = marco_comando();
     let columnas = columnas_comando();
-    // El antiguo hueco junto a la consola se convierte en mando de esclusa.
     let u = (columnas[2] + columnas[3]) * 0.5;
     let mut bloque = |u: f32, y: f32, fondo: f32, w: f32, h: f32, d: f32,
                       material: usize, espejo: bool, color: Color| {
